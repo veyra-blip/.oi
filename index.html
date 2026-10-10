@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smooth - Virtual Fintech Simulation</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-center p-0 md:p-4">
+
+    <!-- App Container -->
+    <div id="app" class="w-full max-w-md bg-slate-900 md:rounded-3xl shadow-2xl overflow-hidden min-h-screen md:min-h-[850px] flex flex-col relative border border-slate-800">
+        
+        <!-- Simulation Notice Banner -->
+        <div class="bg-emerald-950/80 border-b border-emerald-800/50 px-4 py-2 text-center text-xs font-semibold text-emerald-400 flex items-center justify-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            🟢 100% SIMULATED: Virtual Money & Transactions Only
+        </div>
+
+        <!-- Dynamic Screen Content Area -->
+        <div id="screen-container" class="flex-1 flex flex-col overflow-y-auto">
+            <!-- Rendered via JavaScript -->
+        </div>
+    </div>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        // --- DATABASE & STATE MANAGEMENT ---
+        const DB_KEYS = {
+            USERS: 'smooth_app_users_v1',
+            SESSION: 'smooth_app_session_v1'
+        };
+
+        function getStoredUsers() {
+            const data = localStorage.getItem(DB_KEYS.USERS);
+            return data ? JSON.parse(data) : {};
+        }
+
+        function saveStoredUsers(users) {
+            localStorage.setItem(DB_KEYS.USERS, JSON.stringify(users));
+        }
+
+        function getActiveUserPhone() {
+            return localStorage.getItem(DB_KEYS.SESSION);
+        }
+
+        function setActiveUserPhone(phone) {
+            if (phone) localStorage.setItem(DB_KEYS.SESSION, phone);
+            else localStorage.removeItem(DB_KEYS.SESSION);
+        }
+
+        function generateAccountNumber() {
+            return '10' + Math.floor(10000000 + Math.random() * 90000000);
+        }
+
+        // --- ROUTER & VIEW CONTROLLER ---
+        function renderApp() {
+            const currentUserPhone = getActiveUserPhone();
+            const container = document.getElementById('screen-container');
+            
+            if (!currentUserPhone) {
+                if (window.location.hash === '#register') {
+                    container.innerHTML = renderRegisterScreen();
+                } else if (window.location.hash === '#login') {
+                    container.innerHTML = renderLoginScreen();
+                } else {
+                    container.innerHTML = renderLandingScreen();
+                }
+            } else {
+                const users = getStoredUsers();
+                const user = users[currentUserPhone];
+                if (!user) {
+                    setActiveUserPhone(null);
+                    window.location.hash = '';
+                    renderApp();
+                    return;
+                }
+
+                const hash = window.location.hash;
+                if (hash === '#send') {
+                    container.innerHTML = renderSendScreen(user);
+                } else if (hash === '#history') {
+                    container.innerHTML = renderHistoryScreen(user);
+                } else if (hash === '#notifications') {
+                    container.innerHTML = renderNotificationsScreen(user);
+                } else if (hash === '#profile') {
+                    container.innerHTML = renderProfileScreen(user);
+                } else {
+                    container.innerHTML = renderDashboardScreen(user);
+                }
+            }
+        }
+
+        window.addEventListener('hashchange', renderApp);
+        window.addEventListener('load', renderApp);
+
+        // --- SCREENS ---
+
+        function renderLandingScreen() {
+            return `
+                <div class="flex-1 flex flex-col justify-between p-6 bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/30">
+                    <div class="py-8 text-center">
+                        <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-500 text-slate-950 font-black text-3xl mb-4 shadow-lg shadow-emerald-500/20">
+                            S
+                        </div>
+                        <h1 class="text-3xl font-extrabold tracking-tight text-white">Smooth</h1>
+                        <p class="text-emerald-400 font-medium text-sm mt-1">Real-world flows, imaginary money.</p>
+                    </div>
+
+                    <div class="my-auto space-y-4 text-center px-2">
+                        <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-5 backdrop-blur-sm">
+                            <i class="fa-solid fa-wallet text-emerald-400 text-3xl mb-3"></i>
+                            <h3 class="text-lg font-bold text-white">Start with ₦500,000,000</h3>
+                            <p class="text-slate-400 text-xs mt-1">Every new account receives five hundred million virtual Naira to test transfers, bills, airtime, and banking flows safely.</p>
+                        </div>
+                        <p class="text-slate-500 text-xs">No real banking. No payments. Just a safe place to learn and test.</p>
+                    </div>
+
+                    <div class="space-y-3 pt-6">
+                        <button onclick="window.location.hash='#register'" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 px-4 rounded-xl transition shadow-lg shadow-emerald-500/10">
+                            Create Account
+                        </button>
+                        <button onclick="window.location.hash='#login'" class="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3.5 px-4 rounded-xl border border-slate-700 transition">
+                            Sign In
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderRegisterScreen() {
+            return `
+                <div class="flex-1 flex flex-col p-6">
+                    <div class="flex items-center justify-between mb-6">
+                        <button onclick="window.location.hash=''" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
+                        <h2 class="text-lg font-bold text-white">Create Virtual Account</h2>
+                        <div class="w-8"></div>
+                    </div>
+
+                    <form onsubmit="handleRegister(event)" class="space-y-4 pb-8">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">First Name</label>
+                                <input type="text" id="reg-firstname" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">Last Name</label>
+                                <input type="text" id="reg-lastname" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Username (e.g. @BY)</label>
+                            <input type="text" id="reg-username" placeholder="@username" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Phone Number (Primary ID)</label>
+                            <input type="tel" id="reg-phone" placeholder="08012345678" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Email Address</label>
+                            <input type="email" id="reg-email" placeholder="name@example.com" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">NIN / Identity Reference (Demo)</label>
+                            <input type="text" id="reg-nin" placeholder="11-digit demo NIN" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                            <p class="text-[10px] text-slate-500 mt-1">Used as part of your demo profile reference.</p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">Login Password</label>
+                                <input type="password" id="reg-password" placeholder="••••••••" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-400 mb-1">Transaction PIN (4 digits)</label>
+                                <input type="password" id="reg-pin" maxlength="4" placeholder="••••" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl transition mt-4 shadow-lg shadow-emerald-500/10">
+                            Create Account & Get ₦500M Balance
+                        </button>
+                    </form>
+                </div>
+            `;
+        }
+
+        function renderLoginScreen() {
+            return `
+                <div class="flex-1 flex flex-col p-6 justify-center">
+                    <div class="mb-8 text-center">
+                        <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-emerald-500 text-slate-950 font-black text-2xl mb-3">
+                            S
+                        </div>
+                        <h2 class="text-2xl font-bold text-white">Welcome Back</h2>
+                        <p class="text-slate-400 text-xs mt-1">Sign in to your Smooth virtual account</p>
+                    </div>
+
+                    <form onsubmit="handleLogin(event)" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Phone Number or Email</label>
+                            <input type="text" id="login-identifier" placeholder="Phone or Email" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Password</label>
+                            <input type="password" id="login-password" placeholder="••••••••" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg shadow-emerald-500/10 mt-2">
+                            Sign In
+                        </button>
+                    </form>
+
+                    <div class="text-center mt-6">
+                        <button onclick="window.location.hash='#register'" class="text-emerald-400 text-xs font-semibold hover:underline">Don't have an account? Create one</button>
+                    </div>
+
+                    <div class="mt-8 text-center">
+                        <button onclick="window.location.hash=''" class="text-slate-500 text-xs hover:text-slate-300"><i class="fa-solid fa-arrow-left mr-1"></i>Back to Home</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderDashboardScreen(user) {
+            const showUsername = user.settings.showUsername;
+            const displayName = showUsername ? `${user.username} (${user.firstname} ${user.lastname})` : `${user.firstname} ${user.lastname}`;
+
+            return `
+                <div class="flex-1 flex flex-col pb-20">
+                    <!-- Top Header Bar -->
+                    <div class="p-5 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div onclick="window.location.hash='#profile'" class="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold flex items-center justify-center cursor-pointer">
+                                ${user.firstname[0]}${user.lastname[0]}
+                            </div>
+                            <div>
+                                <p class="text-xs text-slate-400">Good day 👋</p>
+                                <h3 class="text-sm font-bold text-white">${user.username}</h3>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button onclick="window.location.hash='#notifications'" class="relative w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 flex items-center justify-center hover:text-white">
+                                <i class="fa-regular fa-bell text-sm"></i>
+                                ${user.notifications.filter(n => !n.read).length > 0 ? '<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-500"></span>' : ''}
+                            </button>
+                            <button onclick="handleLogout()" class="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center hover:bg-rose-500/20" title="Logout">
+                                <i class="fa-solid fa-power-off text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Wallet Card -->
+                    <div class="p-5">
+                        <div class="bg-gradient-to-br from-emerald-900/40 via-slate-900 to-slate-900 border border-emerald-500/30 rounded-2xl p-5 shadow-xl relative overflow-hidden">
+                            <div class="absolute top-0 right-0 p-4 opacity-10 text-emerald-400 text-6xl font-black">
+                                ₦
+                            </div>
+                            <span class="text-[10px] uppercase tracking-wider font-bold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/50">
+                                VIRTUAL MONEY
+                            </span>
+                            <div class="mt-3">
+                                <p class="text-slate-400 text-xs">Total Balance</p>
+                                <h1 class="text-3xl font-extrabold text-white mt-0.5">₦${user.balance.toLocaleString('en-NG', {minimumFractionDigits: 2})}</h1>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3 mt-5 pt-4 border-t border-slate-800/80">
+                                <button onclick="window.location.hash='#send'" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition shadow-md shadow-emerald-500/10">
+                                    <i class="fa-solid fa-arrow-up-right"></i> Send Money
+                                </button>
+                                <button onclick="alert('Account Details:\\nName: ${user.firstname} ${user.lastname}\\nUsername: ${user.username}\\nAccount No: ${user.accountNumber}\\nBank: Smooth Virtual Bank')" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition">
+                                    <i class="fa-solid fa-qrcode"></i> Receive
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Account Details Chip -->
+                    <div class="px-5 mb-5">
+                        <div class="bg-slate-800/40 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs">
+                            <div>
+                                <span class="text-slate-500 block">Account / Phone</span>
+                                <span class="font-bold text-white">${user.phone} • ${user.accountNumber}</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-slate-500 block">Profile ID</span>
+                                <span class="font-bold text-emerald-400">${user.username}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Services -->
+                    <div class="px-5 mb-6">
+                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Simulated Services</h4>
+                        <div class="grid grid-cols-4 gap-3 text-center">
+                            <div onclick="alert('Simulated Airtime Top-up successful!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-mobile-screen"></i></div>
+                                <span class="text-[11px] text-slate-300 font-medium">Airtime</span>
+                            </div>
+                            <div onclick="alert('Simulated Data Subscription successful!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-wifi"></i></div>
+                                <span class="text-[11px] text-slate-300 font-medium">Data</span>
+                            </div>
+                            <div onclick="alert('Simulated Utility Bills paid successfully!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-lightbulb"></i></div>
+                                <span class="text-[11px] text-slate-300 font-medium">Bills</span>
+                            </div>
+                            <div onclick="alert('Simulated Betting Wallet funded!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                                <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-futbol"></i></div>
+                                <span class="text-[11px] text-slate-300 font-medium">Betting</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Transactions -->
+                    <div class="px-5 flex-1">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Recent Transactions</h4>
+                            <button onclick="window.location.hash='#history'" class="text-xs text-emerald-400 font-semibold hover:underline">View All</button>
+                        </div>
+                        
+                        <div class="space-y-2">
+                            ${user.transactions.length === 0 ? '<p class="text-xs text-slate-500 text-center py-6">No transactions yet.</p>' : 
+                                user.transactions.slice(-3).reverse().map(tx => `
+                                    <div class="bg-slate-900 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-9 h-9 rounded-xl ${tx.type === 'debit' ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'} flex items-center justify-center">
+                                                <i class="fa-solid ${tx.type === 'debit' ? 'fa-arrow-up-right' : 'fa-arrow-down-left'} text-xs"></i>
+                                            </div>
+                                            <div>
+                                                <h5 class="text-xs font-bold text-white">${tx.title}</h5>
+                                                <p class="text-[10px] text-slate-400">${tx.date}</p>
+                                            </div>
+                                        </div>
+                                        <span class="text-xs font-bold ${tx.type === 'debit' ? 'text-rose-400' : 'text-emerald-400'}">
+                                            ${tx.type === 'debit' ? '-' : '+'}₦${tx.amount.toLocaleString()}
+                                        </span>
+                                    </div>
+                                `).join('')}
+                        </div>
+                    </div>
+
+                    <!-- Bottom Nav -->
+                    ${renderBottomNav('home')}
+                </div>
+            `;
+        }
+
+        function renderSendScreen(currentUser) {
+            return `
+                <div class="flex-1 flex flex-col pb-20">
+                    <div class="p-5 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                        <button onclick="window.location.hash=''" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
+                        <h2 class="text-sm font-bold text-white">Send Virtual Money</h2>
+                        <div class="w-8"></div>
+                    </div>
+
+                    <div class="p-5 space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Recipient Username or Account No.</label>
+                            <input type="text" id="send-recipient" placeholder="@username or 10-digit number" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Amount (₦)</label>
+                            <input type="number" id="send-amount" placeholder="0.00" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Transaction PIN (4 digits)</label>
+                            <input type="password" id="send-pin" maxlength="4" placeholder="••••" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <button onclick="handleTransfer()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg shadow-emerald-500/10 mt-4">
+                            Authorize & Send Transfer
+                        </button>
+                    </div>
+
+                    ${renderBottomNav('send')}
+                </div>
+            `;
+        }
+
+        function renderHistoryScreen(user) {
+            return `
+                <div class="flex-1 flex flex-col pb-20">
+                    <div class="p-5 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                        <button onclick="window.location.hash=''" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
+                        <h2 class="text-sm font-bold text-white">Transaction Ledger</h2>
+                        <div class="w-8"></div>
+                    </div>
+
+                    <div class="p-5 space-y-2.5 flex-1">
+                        ${user.transactions.length === 0 ? '<p class="text-xs text-slate-500 text-center py-10">No transactions recorded.</p>' :
+                            user.transactions.slice().reverse().map(tx => `
+                                <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5">
+                                    <div class="flex items-center justify-between mb-1">
+                                        <span class="text-xs font-bold text-white">${tx.title}</span>
+                                        <span class="text-xs font-bold ${tx.type === 'debit' ? 'text-rose-400' : 'text-emerald-400'}">${tx.type === 'debit' ? '-' : '+'}₦${tx.amount.toLocaleString()}</span>
+                                    </div>
+                                    <p class="text-[10px] text-slate-400">${tx.details}</p>
+                                    <div class="flex items-center justify-between mt-2 pt-2 border-t border-slate-800/60 text-[10px] text-slate-500">
+                                        <span>ID: ${tx.id}</span>
+                                        <span class="text-emerald-400">${tx.status}</span>
+                                        <span>${tx.date}</span>
+                                    </div>
+                                </div>
+                            `).join('')}
+                    </div>
+
+                    ${renderBottomNav('history')}
+                </div>
+            `;
+        }
+
+        function renderNotificationsScreen(user) {
+            return `
+                <div class="flex-1 flex flex-col pb-20">
+                    <div class="p-5 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                        <button onclick="window.location.hash=''" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
+                        <h2 class="text-sm font-bold text-white">Notifications</h2>
+                        <button onclick="markNotificationsRead()" class="text-[10px] text-emerald-400 font-semibold">Mark read</button>
+                    </div>
+
+                    <div class="p-5 space-y-2.5 flex-1">
+                        ${user.notifications.length === 0 ? '<p class="text-xs text-slate-500 text-center py-10">No notifications.</p>' :
+                            user.notifications.slice().reverse().map(n => `
+                                <div class="bg-slate-900 border ${n.read ? 'border-slate-800' : 'border-emerald-500/40'} rounded-xl p-3.5">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <i class="fa-solid fa-bell text-emerald-400 text-xs"></i>
+                                        <span class="text-xs font-bold text-white">${n.title}</span>
+                                    </div>
+                                    <p class="text-xs text-slate-300">${n.message}</p>
+                                    <span class="text-[10px] text-slate-500 mt-2 block">${n.date}</span>
+                                </div>
+                            `).join('')}
+                    </div>
+
+                    ${renderBottomNav('notifications')}
+                </div>
+            `;
+        }
+
+        function renderProfileScreen(user) {
+            return `
+                <div class="flex-1 flex flex-col pb-20">
+                    <div class="p-5 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+                        <button onclick="window.location.hash=''" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
+                        <h2 class="text-sm font-bold text-white">Profile & Settings</h2>
+                        <div class="w-8"></div>
+                    </div>
+
+                    <div class="p-5 space-y-4">
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-center">
+                            <div class="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold text-xl flex items-center justify-center mx-auto mb-2">
+                                ${user.firstname[0]}${user.lastname[0]}
+                            </div>
+                            <h3 class="font-bold text-white text-base">${user.firstname} ${user.lastname}</h3>
+                            <p class="text-xs text-emerald-400 mt-0.5">${user.username}</p>
+                            <p class="text-xs text-slate-400 mt-1">${user.phone} • ${user.accountNumber}</p>
+                        </div>
+
+                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
+                            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Privacy Settings</h4>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <span class="text-xs font-bold text-white block">Show Username in Profile</span>
+                                    <span class="text-[10px] text-slate-400">Display username alongside legal name</span>
+                                </div>
+                                <input type="checkbox" id="setting-username" ${user.settings.showUsername ? 'checked' : ''} onchange="toggleUsernameSetting()" class="w-4 h-4 accent-emerald-500 cursor-pointer">
+                            </div>
+                        </div>
+
+                        <button onclick="handleLogout()" class="w-full bg-rose-500/10 border border-rose-500/30 text-rose-400 font-bold py-3 rounded-xl text-xs transition">
+                            Sign Out of Account
+                        </button>
+                    </div>
+
+                    ${renderBottomNav('profile')}
+                </div>
+            `;
+        }
+
+        function renderBottomNav(activeTab) {
+            return `
+                <div class="absolute bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur border-t border-slate-800 p-2 flex justify-around items-center text-xs">
+                    <button onclick="window.location.hash=''" class="flex flex-col items-center ${activeTab === 'home' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-white'}">
+                        <i class="fa-solid fa-house text-sm mb-1"></i>Home
+                    </button>
+                    <button onclick="window.location.hash='#send'" class="flex flex-col items-center ${activeTab === 'send' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-white'}">
+                        <i class="fa-solid fa-paper-plane text-sm mb-1"></i>Send
+                    </button>
+                    <button onclick="window.location.hash='#history'" class="flex flex-col items-center ${activeTab === 'history' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-white'}">
+                        <i class="fa-solid fa-receipt text-sm mb-1"></i>Ledger
+                    </button>
+                    <button onclick="window.location.hash='#profile'" class="flex flex-col items-center ${activeTab === 'profile' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-white'}">
+                        <i class="fa-solid fa-user text-sm mb-1"></i>Profile
+                    </button>
+                </div>
+            `;
+        }
+
+        // --- AUTH & TRANSACTION LOGIC ---
+
+        function handleRegister(e) {
+            e.preventDefault();
+            const firstname = document.getElementById('reg-firstname').value.trim();
+            const lastname = document.getElementById('reg-lastname').value.trim();
+            const username = document.getElementById('reg-username').value.trim();
+            const phone = document.getElementById('reg-phone').value.trim();
+            const email = document.getElementById('reg-email').value.trim();
+            const nin = document.getElementById('reg-nin').value.trim();
+            const password = document.getElementById('reg-password').value;
+            const pin = document.getElementById('reg-pin').value;
+
+            if (pin.length !== 4) {
+                alert('Transaction PIN must be exactly 4 digits.');
+                return;
+            }
+
+            let users = getStoredUsers();
+            if (users[phone]) {
+                alert('An account with this phone number already exists.');
+                return;
+            }
+
+            users[phone] = {
+                firstname,
+                lastname,
+                username: username.startsWith('@') ? username : '@' + username,
+                phone,
+                email,
+                nin,
+                password,
+                pin,
+                accountNumber: generateAccountNumber(),
+                balance: 500000000,
+                settings: { showUsername: true },
+                transactions: [{
+                    id: 'TXN' + Math.floor(100000 + Math.random() * 900000),
+                    title: 'Virtual Welcome Bonus',
+                    type: 'credit',
+                    amount: 500000000,
+                    details: 'Initial virtual account funding.',
+                    status: 'Successful',
+                    date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'})
+                }],
+                notifications: [{
+                    title: 'Account Created',
+                    message: 'Welcome to Smooth! Your virtual starting balance of ₦500,000,000 has been credited.',
+                    date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
+                    read: false
+                }]
+            };
+
+            saveStoredUsers(users);
+            setActiveUserPhone(phone);
+            window.location.hash = '';
+            renderApp();
+        }
+
+        function handleLogin(e) {
+            e.preventDefault();
+            const identifier = document.getElementById('login-identifier').value.trim();
+            const password = document.getElementById('login-password').value;
+
+            let users = getStoredUsers();
+            let foundPhone = null;
+
+            for (let phone in users) {
+                let u = users[phone];
+                if (u.phone === identifier || u.email === identifier || u.username === identifier) {
+                    if (u.password === password) {
+                        foundPhone = phone;
+                        break;
+                    }
+                }
+            }
+
+            if (!foundPhone) {
+                alert('Invalid login credentials or phone/email not found.');
+                return;
+            }
+
+            users[foundPhone].notifications.push({
+                title: 'New Login',
+                message: 'Your account was just accessed successfully.',
+                date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
+                read: false
+            });
+            saveStoredUsers(users);
+
+            setActiveUserPhone(foundPhone);
+            window.location.hash = '';
+            renderApp();
+        }
+
+        function handleLogout() {
+            setActiveUserPhone(null);
+            window.location.hash = '';
+            renderApp();
+        }
+
+        function handleTransfer() {
+            const recipientInput = document.getElementById('send-recipient').value.trim();
+            const amount = parseFloat(document.getElementById('send-amount').value);
+            const pin = document.getElementById('send-pin').value;
+
+            const senderPhone = getActiveUserPhone();
+            let users = getStoredUsers();
+            let sender = users[senderPhone];
+
+            if (!recipientInput || isNaN(amount) || amount <= 0 || !pin) {
+                alert('Please fill in all transfer fields correctly.');
+                return;
+            }
+
+            if (pin !== sender.pin) {
+                alert('Incorrect Transaction PIN.');
+                return;
+            }
+
+            if (amount > sender.balance) {
+                alert('Insufficient virtual balance!');
+                return;
+            }
+
+            let recipientPhone = null;
+            for (let p in users) {
+                if (users[p].username.toLowerCase() === recipientInput.toLowerCase() || users[p].accountNumber === recipientInput || users[p].phone === recipientInput) {
+                    recipientPhone = p;
+                    break;
+                }
+            }
+
+            if (!recipientPhone) {
+                alert('Recipient not found on Smooth network. Check username or account number.');
+                return;
+            }
+
+            if (recipientPhone === senderPhone) {
+                alert('You cannot send money to yourself.');
+                return;
+            }
+
+            let recipient = users[recipientPhone];
+            const txnId = 'TXN' + Math.floor(100000 + Math.random() * 900000);
+            const dateStr = new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
+
+            sender.balance -= amount;
+            sender.transactions.push({
+                id: txnId,
+                title: `Sent to ${recipient.username}`,
+                type: 'debit',
+                amount: amount,
+                details: `Name: ${recipient.firstname} ${recipient.lastname} | Acc: ${recipient.accountNumber}`,
+                status: 'Successful',
+                date: dateStr
+            });
+            sender.notifications.push({
+                title: 'Transfer Successful',
+                message: `You successfully sent ₦${amount.toLocaleString()} to ${recipient.username}.`,
+                date: dateStr,
+                read: false
+            });
+
+            recipient.balance += amount;
+            recipient.transactions.push({
+                id: txnId,
+                title: `Received from ${sender.username}`,
+                type: 'credit',
+                amount: amount,
+                details: `Name: ${sender.firstname} ${sender.lastname} | Acc: ${sender.accountNumber}`,
+                status: 'Successful',
+                date: dateStr
+            });
+            recipient.notifications.push({
+                title: 'Money Received',
+                message: `You received ₦${amount.toLocaleString()} virtual money from ${sender.username}.`,
+                date: dateStr,
+                read: false
+            });
+
+            saveStoredUsers(users);
+
+            alert(`Transfer of ₦${amount.toLocaleString()} to ${recipient.firstname} (${recipient.username}) was successful!`);
+            window.location.hash = '';
+            renderApp();
+        }
+
+        function toggleUsernameSetting() {
+            let users = getStoredUsers();
+            let phone = getActiveUserPhone();
+            users[phone].settings.showUsername = document.getElementById('setting-username').checked;
+            saveStoredUsers(users);
+        }
+
+        function markNotificationsRead() {
+            let users = getStoredUsers();
+            let phone = getActiveUserPhone();
+            users[phone].notifications.forEach(n => n.read = true);
+            saveStoredUsers(users);
+            renderApp();
+        }
+    </script>
+</body>
+</html>
