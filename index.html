@@ -28,11 +28,13 @@
         <div id="screen-container" class="flex-1 flex flex-col overflow-y-auto">
             <!-- Rendered via JavaScript -->
         </div>
+
+        <!-- Modal Container for Services -->
+        <div id="modal-container"></div>
     </div>
 
     <!-- JavaScript Application Logic -->
     <script>
-        // --- DATABASE & STATE MANAGEMENT ---
         const DB_KEYS = {
             USERS: 'smooth_app_users_v1',
             SESSION: 'smooth_app_session_v1'
@@ -60,10 +62,10 @@
             return '10' + Math.floor(10000000 + Math.random() * 90000000);
         }
 
-        // --- ROUTER & VIEW CONTROLLER ---
         function renderApp() {
             const currentUserPhone = getActiveUserPhone();
             const container = document.getElementById('screen-container');
+            document.getElementById('modal-container').innerHTML = '';
             
             if (!currentUserPhone) {
                 if (window.location.hash === '#register') {
@@ -174,7 +176,6 @@
                         <div>
                             <label class="block text-xs font-semibold text-slate-400 mb-1">NIN / Identity Reference (Demo)</label>
                             <input type="text" id="reg-nin" placeholder="11-digit demo NIN" required class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
-                            <p class="text-[10px] text-slate-500 mt-1">Used as part of your demo profile reference.</p>
                         </div>
 
                         <div class="grid grid-cols-2 gap-3">
@@ -235,9 +236,6 @@
         }
 
         function renderDashboardScreen(user) {
-            const showUsername = user.settings.showUsername;
-            const displayName = showUsername ? `${user.username} (${user.firstname} ${user.lastname})` : `${user.firstname} ${user.lastname}`;
-
             return `
                 <div class="flex-1 flex flex-col pb-20">
                     <!-- Top Header Bar -->
@@ -280,7 +278,7 @@
                                 <button onclick="window.location.hash='#send'" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition shadow-md shadow-emerald-500/10">
                                     <i class="fa-solid fa-arrow-up-right"></i> Send Money
                                 </button>
-                                <button onclick="alert('Account Details:\\nName: ${user.firstname} ${user.lastname}\\nUsername: ${user.username}\\nAccount No: ${user.accountNumber}\\nBank: Smooth Virtual Bank')" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition">
+                                <button onclick="alert('Account Details:\\nName: ${user.firstname} ${user.lastname}\\nUsername: ${user.username}\\nPhone: ${user.phone}\\nAccount No: ${user.accountNumber}\\nBank: Smooth Virtual Bank')" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-semibold py-2.5 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition">
                                     <i class="fa-solid fa-qrcode"></i> Receive
                                 </button>
                             </div>
@@ -301,23 +299,23 @@
                         </div>
                     </div>
 
-                    <!-- Quick Services -->
+                    <!-- Interactive Simulated Services Grid -->
                     <div class="px-5 mb-6">
                         <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Simulated Services</h4>
                         <div class="grid grid-cols-4 gap-3 text-center">
-                            <div onclick="alert('Simulated Airtime Top-up successful!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                            <div onclick="openServiceModal('Airtime')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
                                 <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-mobile-screen"></i></div>
                                 <span class="text-[11px] text-slate-300 font-medium">Airtime</span>
                             </div>
-                            <div onclick="alert('Simulated Data Subscription successful!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                            <div onclick="openServiceModal('Data')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
                                 <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-wifi"></i></div>
                                 <span class="text-[11px] text-slate-300 font-medium">Data</span>
                             </div>
-                            <div onclick="alert('Simulated Utility Bills paid successfully!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                            <div onclick="openServiceModal('Utility Bills')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
                                 <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-lightbulb"></i></div>
                                 <span class="text-[11px] text-slate-300 font-medium">Bills</span>
                             </div>
-                            <div onclick="alert('Simulated Betting Wallet funded!')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
+                            <div onclick="openServiceModal('Betting Wallet')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/40 p-3 rounded-2xl cursor-pointer transition">
                                 <div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center mb-1.5"><i class="fa-solid fa-futbol"></i></div>
                                 <span class="text-[11px] text-slate-300 font-medium">Betting</span>
                             </div>
@@ -352,7 +350,6 @@
                         </div>
                     </div>
 
-                    <!-- Bottom Nav -->
                     ${renderBottomNav('home')}
                 </div>
             `;
@@ -472,17 +469,6 @@
                             <p class="text-xs text-slate-400 mt-1">${user.phone} • ${user.accountNumber}</p>
                         </div>
 
-                        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
-                            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Privacy Settings</h4>
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <span class="text-xs font-bold text-white block">Show Username in Profile</span>
-                                    <span class="text-[10px] text-slate-400">Display username alongside legal name</span>
-                                </div>
-                                <input type="checkbox" id="setting-username" ${user.settings.showUsername ? 'checked' : ''} onchange="toggleUsernameSetting()" class="w-4 h-4 accent-emerald-500 cursor-pointer">
-                            </div>
-                        </div>
-
                         <button onclick="handleLogout()" class="w-full bg-rose-500/10 border border-rose-500/30 text-rose-400 font-bold py-3 rounded-xl text-xs transition">
                             Sign Out of Account
                         </button>
@@ -512,7 +498,95 @@
             `;
         }
 
-        // --- AUTH & TRANSACTION LOGIC ---
+        // --- SERVICE MODAL FOR AIRTIME/DATA/BILLS/BETTING ---
+        function openServiceModal(serviceName) {
+            const modalContainer = document.getElementById('modal-container');
+            modalContainer.innerHTML = `
+                <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+                    <div class="bg-slate-900 border border-slate-800 w-full max-w-md rounded-t-3xl md:rounded-3xl p-6 space-y-4 shadow-2xl animate-in fade-in slide-in-from-bottom duration-200">
+                        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                            <h3 class="font-bold text-white text-sm">Simulate ${serviceName}</h3>
+                            <button onclick="closeServiceModal()" class="text-slate-400 hover:text-white text-sm"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Recipient / Number / ID</label>
+                            <input type="text" id="service-target" placeholder="Phone or Meter or Account ID" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Amount (₦)</label>
+                            <input type="number" id="service-amount" placeholder="1000" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Transaction PIN (4 digits)</label>
+                            <input type="password" id="service-pin" maxlength="4" placeholder="••••" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-3 text-sm text-white focus:outline-none focus:border-emerald-500">
+                        </div>
+
+                        <button onclick="executeServicePayment('${serviceName}')" class="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg mt-2">
+                            Pay ${serviceName} (Simulated)
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function closeServiceModal() {
+            document.getElementById('modal-container').innerHTML = '';
+        }
+
+        function executeServicePayment(serviceName) {
+            const target = document.getElementById('service-target').value.trim();
+            const amount = parseFloat(document.getElementById('service-amount').value);
+            const pin = document.getElementById('service-pin').value;
+
+            const userPhone = getActiveUserPhone();
+            let users = getStoredUsers();
+            let user = users[userPhone];
+
+            if (!target || isNaN(amount) || amount <= 0 || !pin) {
+                alert('Please fill out all fields correctly.');
+                return;
+            }
+
+            if (pin !== user.pin) {
+                alert('Incorrect Transaction PIN.');
+                return;
+            }
+
+            if (amount > user.balance) {
+                alert('Insufficient virtual balance!');
+                return;
+            }
+
+            const txnId = 'TXN' + Math.floor(100000 + Math.random() * 900000);
+            const dateStr = new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
+
+            user.balance -= amount;
+            user.transactions.push({
+                id: txnId,
+                title: `${serviceName} Purchase`,
+                type: 'debit',
+                amount: amount,
+                details: `Target: ${target} | Status: Successful`,
+                status: 'Successful',
+                date: dateStr
+            });
+            user.notifications.push({
+                title: `${serviceName} Successful`,
+                message: `You successfully paid ₦${amount.toLocaleString()} for ${serviceName} to (${target}).`,
+                date: dateStr,
+                read: false
+            });
+
+            saveStoredUsers(users);
+            closeServiceModal();
+            alert(`${serviceName} purchase of ₦${amount.toLocaleString()} successful!`);
+            renderApp();
+        }
+
+        // --- AUTH & TRANSFER LOGIC ---
 
         function handleRegister(e) {
             e.preventDefault();
@@ -573,7 +647,7 @@
 
         function handleLogin(e) {
             e.preventDefault();
-            const identifier = document.getElementById('login-identifier').value.trim();
+            const identifier = document.getElementById('login-identifier').value.trim().toLowerCase();
             const password = document.getElementById('login-password').value;
 
             let users = getStoredUsers();
@@ -581,7 +655,7 @@
 
             for (let phone in users) {
                 let u = users[phone];
-                if (u.phone === identifier || u.email === identifier || u.username === identifier) {
+                if (u.phone.toLowerCase() === identifier || u.email.toLowerCase() === identifier || u.username.toLowerCase() === identifier) {
                     if (u.password === password) {
                         foundPhone = phone;
                         break;
@@ -590,17 +664,9 @@
             }
 
             if (!foundPhone) {
-                alert('Invalid login credentials or phone/email not found.');
+                alert('Invalid login credentials or account not found.');
                 return;
             }
-
-            users[foundPhone].notifications.push({
-                title: 'New Login',
-                message: 'Your account was just accessed successfully.',
-                date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
-                read: false
-            });
-            saveStoredUsers(users);
 
             setActiveUserPhone(foundPhone);
             window.location.hash = '';
@@ -614,7 +680,7 @@
         }
 
         function handleTransfer() {
-            const recipientInput = document.getElementById('send-recipient').value.trim();
+            const recipientInput = document.getElementById('send-recipient').value.trim().toLowerCase();
             const amount = parseFloat(document.getElementById('send-amount').value);
             const pin = document.getElementById('send-pin').value;
 
@@ -637,16 +703,21 @@
                 return;
             }
 
+            // Case-insensitive lookup for username or account number
             let recipientPhone = null;
             for (let p in users) {
-                if (users[p].username.toLowerCase() === recipientInput.toLowerCase() || users[p].accountNumber === recipientInput || users[p].phone === recipientInput) {
+                let u = users[p];
+                if (u.username.toLowerCase() === recipientInput || 
+                    u.username.toLowerCase() === '@' + recipientInput.replace('@','') || 
+                    u.accountNumber === recipientInput || 
+                    u.phone === recipientInput) {
                     recipientPhone = p;
                     break;
                 }
             }
 
             if (!recipientPhone) {
-                alert('Recipient not found on Smooth network. Check username or account number.');
+                alert('Recipient not found. Please check their username (e.g. @username) or account number.');
                 return;
             }
 
@@ -698,13 +769,6 @@
             alert(`Transfer of ₦${amount.toLocaleString()} to ${recipient.firstname} (${recipient.username}) was successful!`);
             window.location.hash = '';
             renderApp();
-        }
-
-        function toggleUsernameSetting() {
-            let users = getStoredUsers();
-            let phone = getActiveUserPhone();
-            users[phone].settings.showUsername = document.getElementById('setting-username').checked;
-            saveStoredUsers(users);
         }
 
         function markNotificationsRead() {
