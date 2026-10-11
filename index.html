@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OPay Simulation</title>
+    <title>OPay - Simulated Fintech</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
@@ -13,44 +15,108 @@
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-0 md:p-4">
 
+    <!-- App Container -->
     <div id="app" class="w-full max-w-md bg-[#181818] md:rounded-3xl shadow-2xl overflow-hidden min-h-screen md:min-h-[850px] flex flex-col relative border border-[#262626]">
+        
+        <!-- Top Status Bar -->
+        <div class="bg-[#10b981]/20 border-b border-[#10b981]/30 px-4 py-1.5 text-center text-[11px] font-semibold text-[#10b981] flex items-center justify-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-[#10b981] animate-pulse"></span>
+            OPay Internal Virtual Simulation (₦500M Starting Balance)[span_12](start_span)[span_12](end_span)
+        </div>
+
+        <!-- Dynamic Screen Content Area -->
         <div id="screen-container" class="flex-1 flex flex-col overflow-y-auto pb-20"></div>
+
+        <!-- Modal Container for Drawers & Loaders -->
         <div id="modal-container"></div>
     </div>
 
+    <!-- JavaScript Application Logic -->
     <script>
-        let session = localStorage.getItem('opay_session') || null;
+        const DB_KEYS = {
+            USERS: 'opay_sim_users_v4',
+            SESSION: 'opay_sim_session_v4',
+            PENDING_REG: 'opay_sim_pending_reg_v4'
+        };
 
-        async function request(url, data) {
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            return await res.json();
+        const POPULAR_BANKS = [
+            "OPay Simulation Network",
+            "Moniepoint Microfinance Bank",
+            "Access Bank",
+            "Guaranty Trust Bank (GTB)",
+            "First Bank of Nigeria",
+            "United Bank for Africa (UBA)",
+            "Zenith Bank",
+            "Kuda Bank",
+            "Fidelity Bank",
+            "Polaris Bank"
+        ];
+
+        function getStoredUsers() {
+            const data = localStorage.getItem(DB_KEYS.USERS);
+            return data ? JSON.parse(data) : {};
         }
 
-        async function renderApp() {
+        function saveStoredUsers(users) {
+            localStorage.setItem(DB_KEYS.USERS, JSON.stringify(users));
+        }
+
+        function getActiveUserPhone() {
+            return localStorage.getItem(DB_KEYS.SESSION);
+        }
+
+        function setActiveUserPhone(phone) {
+            if (phone) localStorage.setItem(DB_KEYS.SESSION, phone);
+            else localStorage.removeItem(DB_KEYS.SESSION);
+        }
+
+        function generateAccountNumber() {
+            return '81' + Math.floor(10000000 + Math.random() * 90000000);
+        }
+
+        function renderApp() {
+            const currentUserPhone = getActiveUserPhone();
+            const pendingReg = localStorage.getItem(DB_KEYS.PENDING_REG);
             const container = document.getElementById('screen-container');
             document.getElementById('modal-container').innerHTML = '';
+            
+            if (pendingReg) {
+                container.innerHTML = renderSetupPinScreen(pendingReg);
+                return;
+            }
 
-            if (!session) {
-                if (window.location.hash === '#register') container.innerHTML = renderRegister();
-                else container.innerHTML = renderLogin();
+            if (!currentUserPhone) {
+                if (window.location.hash === '#register') {
+                    container.innerHTML = renderRegisterScreen();
+                } else {
+                    container.innerHTML = renderLoginScreen();
+                }
             } else {
-                const res = await fetch(`/api/user/${session}`);
-                const data = await res.json();
-                if (!data.success) { session = null; localStorage.removeItem('opay_session'); renderApp(); return; }
-                
-                const user = data.user;
-                const hash = window.location.hash;
+                const users = getStoredUsers();
+                const user = users[currentUserPhone];
+                if (!user) {
+                    setActiveUserPhone(null);
+                    window.location.hash = '';
+                    renderApp();
+                    return;
+                }
 
-                if (hash === '#send') container.innerHTML = renderSend(user);
-                else if (hash === '#history') container.innerHTML = renderHistory(user);
-                else if (hash === '#notifications') container.innerHTML = renderNotifications(user);
-                else if (hash === '#all-services') container.innerHTML = renderAllServices(user);
-                else if (hash === '#profile') container.innerHTML = renderProfile(user);
-                else container.innerHTML = renderHome(user);
+                const hash = window.location.hash;
+                if (hash === '#send-opay') {
+                    container.innerHTML = renderSendOpayScreen(user);
+                } else if (hash === '#send-bank') {
+                    container.innerHTML = renderSendBankScreen(user);
+                } else if (hash === '#history') {
+                    container.innerHTML = renderHistoryScreen(user);
+                } else if (hash === '#notifications') {
+                    container.innerHTML = renderNotificationsScreen(user);
+                } else if (hash === '#all-services') {
+                    container.innerHTML = renderAllServicesScreen(user);
+                } else if (hash === '#profile') {
+                    container.innerHTML = renderProfileScreen(user);
+                } else {
+                    container.innerHTML = renderDashboardScreen(user);
+                }
             }
         }
 
@@ -59,45 +125,102 @@
 
         // --- SCREENS ---
 
-        function renderLogin() {
+        function renderLoginScreen() {
             return `
                 <div class="flex-1 flex flex-col p-6 justify-center">
                     <div class="text-center mb-8">
                         <div class="w-16 h-16 rounded-2xl bg-[#10b981] text-black font-extrabold text-3xl flex items-center justify-center mx-auto mb-3 shadow-lg">₦</div>
-                        <h1 class="text-2xl font-bold text-white">Welcome to OPay</h1>
-                        <p class="text-xs text-slate-400 mt-1">Internal Network Simulation</p>
+                        <h1 class="text-2xl font-bold text-white">OPay Simulation</h1>
+                        <p class="text-xs text-slate-400 mt-1">Internal Network & Virtual Funds</p>
                     </div>
+
                     <form onsubmit="handleLogin(event)" class="space-y-4">
-                        <input type="text" id="log-id" placeholder="Phone Number or Email" required class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
-                        <input type="password" id="log-pw" placeholder="Password" required class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
-                        <button type="submit" class="w-full bg-[#10b981] hover:bg-[#059669] text-black font-bold py-3.5 rounded-xl transition">Sign In</button>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Phone Number or Email</label>
+                            <input type="text" id="login-identifier" placeholder="08012345678" required class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Password</label>
+                            <input type="password" id="login-password" placeholder="••••••••" required class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
+                        </div>
+                        <button type="submit" class="w-full bg-[#10b981] hover:bg-[#059669] text-black font-bold py-3.5 rounded-xl transition shadow-lg mt-2">
+                            Sign In
+                        </button>
                     </form>
-                    <button onclick="window.location.hash='#register'" class="text-xs text-[#10b981] text-center mt-6 block">Don't have an account? Register</button>
+
+                    <div class="text-center mt-6">
+                        <button onclick="window.location.hash='#register'" class="text-xs text-[#10b981] font-semibold hover:underline">Create a new OPay account</button>
+                    </div>
                 </div>
             `;
         }
 
-        function renderRegister() {
+        function renderRegisterScreen() {
             return `
                 <div class="flex-1 flex flex-col p-6 justify-center">
-                    <h2 class="text-lg font-bold text-white mb-4">Create OPay Account</h2>
+                    <div class="mb-4">
+                        <button onclick="window.location.hash=''" class="text-slate-400 text-xs hover:text-white"><i class="fa-solid fa-arrow-left mr-1"></i>Back to Sign In</button>
+                        <h2 class="text-lg font-bold text-white mt-2">Open OPay Account</h2>
+                        <p class="text-xs text-slate-400">Independent isolated virtual wallet</p>
+                    </div>
+
                     <form onsubmit="handleRegister(event)" class="space-y-3">
                         <div class="grid grid-cols-2 gap-2">
-                            <input type="text" id="reg-fn" placeholder="First Name" required class="bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white">
-                            <input type="text" id="reg-ln" placeholder="Last Name" required class="bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white">
+                            <div>
+                                <label class="block text-[10px] font-semibold text-slate-400 mb-1">First Name</label>
+                                <input type="text" id="reg-firstname" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white focus:border-[#10b981] focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-semibold text-slate-400 mb-1">Last Name</label>
+                                <input type="text" id="reg-lastname" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white focus:border-[#10b981] focus:outline-none">
+                            </div>
                         </div>
-                        <input type="tel" id="reg-ph" placeholder="Phone Number (Login ID)" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white">
-                        <input type="email" id="reg-em" placeholder="Email Address" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white">
-                        <input type="password" id="reg-pw" placeholder="Password" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white">
-                        <input type="tel" inputmode="numeric" maxLength="4" id="reg-pin" placeholder="4-digit Transaction PIN" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white tracking-widest">
-                        <button type="submit" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl text-xs mt-2">Open Account (Get ₦500M)</button>
+
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-400 mb-1">Phone Number (Primary ID)</label>
+                            <input type="tel" id="reg-phone" placeholder="08012345678" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white focus:border-[#10b981] focus:outline-none">
+                        </div>
+
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-400 mb-1">Email Address</label>
+                            <input type="email" id="reg-email" placeholder="name@example.com" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white focus:border-[#10b981] focus:outline-none">
+                        </div>
+
+                        <div>
+                            <label class="block text-[10px] font-semibold text-slate-400 mb-1">Password</label>
+                            <input type="password" id="reg-password" required class="w-full bg-[#222] border border-[#333] p-3 rounded-xl text-xs text-white focus:border-[#10b981] focus:outline-none">
+                        </div>
+
+                        <button type="submit" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl text-xs mt-3 shadow-lg">
+                            Continue & Setup Security PIN
+                        </button>
                     </form>
-                    <button onclick="window.location.hash=''" class="text-xs text-slate-400 text-center mt-4 block">Back to Sign In</button>
                 </div>
             `;
         }
 
-        function renderHome(user) {
+        function renderSetupPinScreen(phone) {
+            return `
+                <div class="flex-1 flex flex-col p-6 justify-center text-center">
+                    <div class="w-16 h-16 rounded-full bg-[#10b981]/20 text-[#10b981] flex items-center justify-center mx-auto mb-4 text-2xl">
+                        <i class="fa-solid fa-lock"></i>
+                    </div>
+                    <h2 class="text-xl font-bold text-white mb-1">Create Transaction PIN</h2>
+                    <p class="text-xs text-slate-400 mb-6">Set your 4-digit PIN to authorize internal transfers and bill payments.</p>
+                    
+                    <div class="space-y-4 max-w-xs mx-auto w-full">
+                        <input type="tel" inputmode="numeric" maxlength="4" id="setup-pin" placeholder="••••" class="w-full bg-[#222] border border-[#333] p-4 rounded-xl text-center text-2xl text-white tracking-[1em] focus:border-[#10b981] focus:outline-none">
+                        
+                        <button onclick="finalizeRegistration('${phone}')" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl text-xs shadow-lg">
+                            Save PIN & Enable Fingerprint
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderDashboardScreen(user) {
+            const hideBal = user.hideBalance;
             return `
                 <div class="flex-1 flex flex-col">
                     <!-- Top Bar -->
@@ -107,73 +230,75 @@
                                 ${user.firstname[0]}${user.lastname[0]}
                             </div>
                             <div>
-                                <h3 class="text-xs text-slate-400">Hi, ${user.firstname} ${user.lastname}</h3>
+                                <h3 class="text-xs text-slate-300 font-semibold">Hi, ${user.firstname} ${user.lastname}[span_13](start_span)[span_13](end_span)</h3>
                             </div>
                         </div>
-                        <div class="flex items-center gap-4 text-slate-300">
-                            <i class="fa-solid fa-headset cursor-pointer"></i>
-                            <i class="fa-solid fa-qrcode cursor-pointer"></i>
-                            <i onclick="window.location.hash='#notifications'" class="fa-regular fa-bell cursor-pointer relative"></i>
+                        <div class="flex items-center gap-4 text-slate-300 text-sm">
+                            <i class="fa-solid fa-headset cursor-pointer" title="Support"></i>
+                            <i class="fa-solid fa-qrcode cursor-pointer" title="Scan QR"></i>
+                            <i onclick="window.location.hash='#notifications'" class="fa-regular fa-bell cursor-pointer relative" title="Notifications">
+                                ${user.notifications.filter(n => !n.read).length > 0 ? '<span class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-[#10b981]"></span>' : ''}
+                            </i>
                         </div>
                     </div>
 
                     <!-- Balance Card -->
                     <div class="p-4">
-                        <div class="bg-[#10b981] text-black rounded-2xl p-5 shadow-lg relative">
+                        <div class="bg-[#10b981] text-black rounded-2xl p-5 shadow-xl relative">
                             <div class="flex items-center justify-between">
                                 <span class="text-xs font-semibold opacity-90 flex items-center gap-1">
-                                    Available Balance 
-                                    <i onclick="toggleBalanceVisibility()" class="fa-solid ${user.hideBalance ? 'fa-eye-slash' : 'fa-eye'} cursor-pointer ml-1"></i>
+                                    Available Balance[span_14](start_span)[span_14](end_span)
+                                    <i onclick="toggleBalanceVisibility()" class="fa-solid ${hideBal ? 'fa-eye-slash' : 'fa-eye'} cursor-pointer ml-1 text-sm"></i>
                                 </span>
-                                <span onclick="window.location.hash='#history'" class="text-xs font-bold underline cursor-pointer">Transaction History</span>
+                                <span onclick="window.location.hash='#history'" class="text-xs font-bold underline cursor-pointer">Transaction History[span_15](start_span)[span_15](end_span)</span>
                             </div>
                             <h1 class="text-3xl font-extrabold mt-2">
-                                ${user.hideBalance ? '₦••••••••' : '₦' + user.balance.toLocaleString('en-NG', {minimumFractionDigits: 2})}
+                                ${hideBal ? '₦••••••••' : '₦' + user.balance.toLocaleString('en-NG', {minimumFractionDigits: 2})}
                             </h1>
                             <div class="flex justify-between items-center mt-4 pt-3 border-t border-black/10 text-xs font-semibold">
-                                <span>Earned Today ₦0.00</span>
-                                <button onclick="alert('Account No: ${user.accountNumber}\\nPhone: ${user.phone}')" class="bg-black text-[#10b981] px-3 py-1 rounded-lg">Add Money</button>
+                                <span>Earned Today ₦0.09[span_16](start_span)[span_16](end_span)</span>
+                                <button onclick="alert('Account Number: ${user.accountNumber}\\nPhone Number: ${user.phone}\\nShare either number to receive internal transfers.')" class="bg-black text-[#10b981] px-3 py-1 rounded-lg">Add Money[span_17](start_span)[span_17](end_span)</button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Quick Action Grid (OPay style)[span_9](start_span)[span_9](end_span) -->
+                    <!-- Quick Actions Grid (To OPay & To Bank)[span_18](start_span)[span_18](end_span) -->
                     <div class="px-4 py-2 grid grid-cols-4 gap-3 text-center">
-                        <div onclick="window.location.hash='#send'" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="window.location.hash='#send-opay'" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-10 h-10 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-user"></i></div>
-                            <span class="text-[11px] text-slate-300">To OPay</span>
+                            <span class="text-[11px] text-slate-300">To OPay[span_19](start_span)[span_19](end_span)</span>
                         </div>
-                        <div onclick="alert('Internal simulation mode: Transfers restricted to OPay network accounts only.')" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="window.location.hash='#send-bank'" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-10 h-10 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-building-columns"></i></div>
-                            <span class="text-[11px] text-slate-300">To Bank</span>
+                            <span class="text-[11px] text-slate-300">To Bank[span_20](start_span)[span_20](end_span)</span>
                         </div>
-                        <div onclick="openServiceModal('Savings')" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="openServiceModal('Savings')" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-10 h-10 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-vault"></i></div>
-                            <span class="text-[11px] text-slate-300">Save</span>
+                            <span class="text-[11px] text-slate-300">Save[span_21](start_span)[span_21](end_span)</span>
                         </div>
-                        <div onclick="openServiceModal('Loan')" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="openServiceModal('Loan')" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-10 h-10 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-hand-holding-dollar"></i></div>
-                            <span class="text-[11px] text-slate-300">Loan</span>
+                            <span class="text-[11px] text-slate-300">Loan[span_22](start_span)[span_22](end_span)</span>
                         </div>
                     </div>
 
-                    <!-- Services Grid[span_10](start_span)[span_10](end_span) -->
+                    <!-- Services Grid[span_23](start_span)[span_23](end_span) -->
                     <div class="px-4 py-3 grid grid-cols-4 gap-3 text-center">
-                        <div onclick="openServiceModal('Airtime')" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="openServiceModal('Airtime')" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-9 h-9 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-mobile-screen text-xs"></i></div>
-                            <span class="text-[10px] text-slate-300">Airtime</span>
+                            <span class="text-[10px] text-slate-300">Airtime[span_24](start_span)[span_24](end_span)</span>
                         </div>
-                        <div onclick="openServiceModal('Data')" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="openServiceModal('Data')" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-9 h-9 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-wifi text-xs"></i></div>
-                            <span class="text-[10px] text-slate-300">Data</span>
+                            <span class="text-[10px] text-slate-300">Data[span_25](start_span)[span_25](end_span)</span>
                         </div>
-                        <div onclick="openServiceModal('Betting')" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="openServiceModal('Betting')" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-9 h-9 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-futbol text-xs"></i></div>
-                            <span class="text-[10px] text-slate-300">Betting</span>
+                            <span class="text-[10px] text-slate-300">Betting[span_26](start_span)[span_26](end_span)</span>
                         </div>
-                        <div onclick="window.location.hash='#all-services'" class="bg-[#222] p-3 rounded-2xl cursor-pointer">
+                        <div onclick="window.location.hash='#all-services'" class="bg-[#222] p-3 rounded-2xl cursor-pointer hover:bg-[#2a2a2a] transition">
                             <div class="w-9 h-9 rounded-xl bg-[#10b981]/10 text-[#10b981] mx-auto flex items-center justify-center mb-1"><i class="fa-solid fa-grip text-xs"></i></div>
-                            <span class="text-[10px] text-slate-300">More</span>
+                            <span class="text-[10px] text-slate-300">More[span_27](start_span)[span_27](end_span)</span>
                         </div>
                     </div>
 
@@ -182,7 +307,8 @@
             `;
         }
 
-        function renderSend(user) {
+        // --- "TO OPAY" TRANSFER SCREEN ---
+        function renderSendOpayScreen(user) {
             return `
                 <div class="flex-1 flex flex-col p-4 space-y-4">
                     <div class="flex items-center justify-between border-b border-[#262626] pb-3">
@@ -193,7 +319,12 @@
 
                     <div>
                         <label class="block text-xs font-semibold text-slate-400 mb-1">Recipient Phone Number or Account No.</label>
-                        <input type="tel" id="send-target" placeholder="Enter phone or 10-digit account" class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
+                        <input type="tel" id="send-target" oninput="lookupOpayRecipientName()" placeholder="Enter phone or 10-digit account" class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
+                    </div>
+
+                    <div id="recipient-name-box" class="hidden bg-[#222]/80 border border-[#10b981]/40 rounded-xl p-3 text-xs flex items-center justify-between">
+                        <span class="text-slate-400">Account Name:</span>
+                        <span id="resolved-name" class="font-bold text-[#10b981]"></span>
                     </div>
 
                     <div>
@@ -202,18 +333,303 @@
                     </div>
 
                     <div>
-                        <label class="block text-xs font-semibold text-slate-400 mb-1">Transaction PIN (4 digits)</label>
-                        <input type="tel" inputmode="numeric" maxLength="4" id="send-pin" placeholder="••••" class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white tracking-widest focus:border-[#10b981] focus:outline-none">
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">Description / Narration (Optional)</label>
+                        <input type="text" id="send-note" placeholder="What's this for?" class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
                     </div>
 
-                    <button onclick="executeTransfer()" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl transition mt-4">Transfer Now</button>
+                    <button onclick="initiateOpayTransferFlow()" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl transition mt-2">Next</button>
 
                     ${renderBottomNav('send')}
                 </div>
             `;
         }
 
-        function renderHistory(user) {
+        // --- "TO BANK" TRANSFER SCREEN (Exact UI matching screenshot)[span_28](start_span)[span_28](end_span)[span_29](start_span)[span_29](end_span) ---
+        function renderSendBankScreen(user) {
+            return `
+                <div class="flex-1 flex flex-col p-4 space-y-4">
+                    <div class="flex items-center justify-between border-b border-[#262626] pb-3">
+                        <button onclick="window.location.hash=''" class="text-slate-400 text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
+                        <h2 class="text-sm font-bold text-white">Transfer to Bank Account[span_30](start_span)[span_30](end_span)[span_31](start_span)[span_31](end_span)</h2>
+                        <span onclick="window.location.hash='#history'" class="text-xs text-[#10b981] cursor-pointer">History[span_32](start_span)[span_32](end_span)[span_33](start_span)[span_33](end_span)</span>
+                    </div>
+
+                    <!-- Promo Banner[span_34](start_span)[span_34](end_span)[span_35](start_span)[span_35](end_span) -->
+                    <div class="bg-gradient-to-r from-emerald-900/60 to-emerald-950/80 border border-[#10b981]/30 rounded-2xl p-3.5 flex items-center justify-between">
+                        <div>
+                            <span class="text-[10px] bg-[#10b981] text-black font-bold px-1.5 py-0.5 rounded">PROMO</span>
+                            <h4 class="text-xs font-bold text-white mt-1">Enjoy Free Transfers</h4>
+                            <p class="text-[10px] text-slate-300">Free transfers for the day: <strong class="text-[#10b981]">3</strong>[span_36](start_span)[span_36](end_span)[span_37](start_span)[span_37](end_span)</p>
+                        </div>
+                        <i class="fa-solid fa-gift text-2xl text-[#10b981]"></i>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">Recipient Account</label>
+                        <input type="tel" id="bank-account-num" maxlength="10" placeholder="Enter 10 digits Account Number[span_38](start_span)[span_38](end_span)[span_39](start_span)[span_39](end_span)" class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">Select Bank</label>
+                        <select id="bank-select-dropdown" class="w-full bg-[#222] border border-[#333] rounded-xl px-4 py-3 text-sm text-white focus:border-[#10b981] focus:outline-none">
+                            <option value="">Select Bank[span_40](start_span)[span_40](end_span)[span_41](start_span)[span_41](end_span)</option>
+                            ${POPULAR_BANKS.map(b => `<option value="${b}">${b}</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <button onclick="proceedToBankAmountScreen()" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl transition mt-2">Next[span_42](start_span)[span_42](end_span)[span_43](start_span)[span_43](end_span)</button>
+
+                    <!-- Recents & Favorites[span_44](start_span)[span_44](end_span)[span_45](start_span)[span_45](end_span) -->
+                    <div class="mt-4">
+                        <div class="flex gap-4 border-b border-[#262626] pb-2 text-xs font-bold text-slate-400">
+                            <span class="text-[#10b981] border-b-2 border-[#10b981] pb-2">Recents[span_46](start_span)[span_46](end_span)[span_47](start_span)[span_47](end_span)</span>
+                            <span>Favourites[span_48](start_span)[span_48](end_span)[span_49](start_span)[span_49](end_span)</span>
+                        </div>
+                        <div class="mt-3 space-y-2">
+                            <div class="bg-[#222] p-3 rounded-xl flex items-center justify-between text-xs">
+                                <div>
+                                    <span class="font-bold text-white block">ROSELINE NNEKA EZE[span_50](start_span)[span_50](end_span)[span_51](start_span)[span_51](end_span)</span>
+                                    <span class="text-slate-400 text-[10px]">5109619378 • MONIEPOINT[span_52](start_span)[span_52](end_span)[span_53](start_span)[span_53](end_span)</span>
+                                </div>
+                                <div class="w-8 h-8 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs">M</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${renderBottomNav('send')}
+                </div>
+            `;
+        }
+
+        // --- AMOUNT & REMARK SCREEN FOR BANK TRANSFERS (Matching Screenshot)[span_54](start_span)[span_54](end_span) ---
+        function proceedToBankAmountScreen() {
+            const accNum = document.getElementById('bank-account-num').value.trim();
+            const bankName = document.getElementById('bank-select-dropdown').value;
+
+            if (accNum.length !== 10 || !bankName) {
+                alert('Please enter a valid 10-digit account number and select a bank.');
+                return;
+            }
+
+            const container = document.getElementById('screen-container');
+            container.innerHTML = `
+                <div class="flex-1 flex flex-col p-4 space-y-4">
+                    <div class="flex items-center justify-between border-b border-[#262626] pb-3">
+                        <button onclick="renderApp()" class="text-slate-400 text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
+                        <h2 class="text-sm font-bold text-white">Transfer to Bank Account[span_55](start_span)[span_55](end_span)</h2>
+                        <div class="w-8"></div>
+                    </div>
+
+                    <!-- Recipient Banner[span_56](start_span)[span_56](end_span) -->
+                    <div class="bg-[#222] p-3.5 rounded-2xl flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center">M</div>
+                        <div>
+                            <h4 class="text-xs font-bold text-white">TEST RECIPIENT NAME[span_57](start_span)[span_57](end_span)</h4>
+                            <p class="text-[10px] text-slate-400">${accNum} ${bankName.toUpperCase()}[span_58](start_span)[span_58](end_span)</p>
+                        </div>
+                    </div>
+
+                    <!-- Amount Section[span_59](start_span)[span_59](end_span) -->
+                    <div class="bg-[#222] p-4 rounded-2xl space-y-3">
+                        <label class="block text-xs font-semibold text-slate-400">Amount[span_60](start_span)[span_60](end_span)</label>
+                        <div class="text-2xl font-extrabold text-white flex items-center gap-1">
+                            <span>₦</span>
+                            <input type="number" id="bank-transfer-amount" placeholder="100.00 - 5,000,000.00" class="w-full bg-transparent text-white focus:outline-none text-xl">
+                        </div>
+                        <div class="grid grid-cols-5 gap-2 pt-2">
+                            <button onclick="setAmount(500)" class="bg-[#2a2a2a] text-xs py-1.5 rounded-lg text-slate-300">₦500[span_61](start_span)[span_61](end_span)</button>
+                            <button onclick="setAmount(1000)" class="bg-[#2a2a2a] text-xs py-1.5 rounded-lg text-slate-300">₦1,000[span_62](start_span)[span_62](end_span)</button>
+                            <button onclick="setAmount(2000)" class="bg-[#2a2a2a] text-xs py-1.5 rounded-lg text-slate-300">₦2,000[span_63](start_span)[span_63](end_span)</button>
+                            <button onclick="setAmount(5000)" class="bg-[#2a2a2a] text-xs py-1.5 rounded-lg text-slate-300">₦5,000[span_64](start_span)[span_64](end_span)</button>
+                            <button onclick="setAmount(10000)" class="bg-[#2a2a2a] text-xs py-1.5 rounded-lg text-slate-300">₦10,000[span_65](start_span)[span_65](end_span)</button>
+                        </div>
+                    </div>
+
+                    <!-- Remark / Narration[span_66](start_span)[span_66](end_span) -->
+                    <div class="bg-[#222] p-4 rounded-2xl space-y-2">
+                        <label class="block text-xs font-semibold text-slate-400">Remark[span_67](start_span)[span_67](end_span)</label>
+                        <input type="text" id="bank-transfer-remark" placeholder="What's this for? (Optional)[span_68](start_span)[span_68](end_span)" class="w-full bg-transparent text-sm text-white focus:outline-none">
+                    </div>
+
+                    <!-- Category[span_69](start_span)[span_69](end_span) -->
+                    <div class="bg-[#222] p-4 rounded-2xl space-y-2">
+                        <label class="block text-xs font-semibold text-slate-400">Category[span_70](start_span)[span_70](end_span)</label>
+                        <div class="grid grid-cols-4 gap-2 text-center text-[10px] text-slate-300">
+                            <div class="bg-[#2a2a2a] p-2 rounded-xl"><i class="fa-solid fa-utensils mb-1 text-[#10b981]"></i><block>Food & Dining[span_71](start_span)[span_71](end_span)</block></div>
+                            <div class="bg-[#2a2a2a] p-2 rounded-xl"><i class="fa-solid fa-basket-shopping mb-1"></i><block>Groceries[span_72](start_span)[span_72](end_span)</block></div>
+                            <div class="bg-[#2a2a2a] p-2 rounded-xl"><i class="fa-solid fa-lightbulb mb-1"></i><block>Bills & Utilities[span_73](start_span)[span_73](end_span)</block></div>
+                            <div class="bg-[#2a2a2a] p-2 rounded-xl"><i class="fa-solid fa-users mb-1"></i><block>Family & Friends[span_74](start_span)[span_74](end_span)</block></div>
+                        </div>
+                    </div>
+
+                    <button onclick="showBankConfirmationModal('${accNum}', '${bankName}')" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl transition mt-4">Confirm[span_75](start_span)[span_75](end_span)</button>
+                </div>
+            `;
+        }
+
+        function setAmount(val) {
+            document.getElementById('bank-transfer-amount').value = val;
+        }
+
+        // --- MODAL 1: REMINDER / DOUBLE CHECK MODAL (Matching Screenshot)[span_76](start_span)[span_76](end_span) ---
+        function showBankConfirmationModal(accNum, bankName) {
+            const amount = parseFloat(document.getElementById('bank-transfer-amount').value);
+            if (isNaN(amount) || amount <= 0) {
+                alert('Please enter a valid amount.');
+                return;
+            }
+
+            document.getElementById('modal-container').innerHTML = `
+                <div class="absolute inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-end justify-center p-0 md:p-4">
+                    <div class="bg-[#1e1e1e] border border-[#333] w-full max-w-md rounded-t-3xl md:rounded-3xl p-6 space-y-4 shadow-2xl">
+                        <div class="flex justify-between items-center border-b border-[#333] pb-3">
+                            <h3 class="font-bold text-white text-sm">Reminder[span_77](start_span)[span_77](end_span)</h3>
+                            <button onclick="document.getElementById('modal-container').innerHTML=''" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                        
+                        <p class="text-xs text-slate-300">Double check the transfer details before you proceed. Please note that successful transfers cannot be reversed[span_78](start_span)[span_78](end_span).</p>
+
+                        <div class="bg-[#262626] p-4 rounded-xl space-y-2 text-xs">
+                            <div class="flex justify-between"><span class="text-slate-400">Name[span_79](start_span)[span_79](end_span)</span><span class="font-bold text-white">TEST RECIPIENT NAME[span_80](start_span)[span_80](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Account No.[span_81](start_span)[span_81](end_span)</span><span class="font-bold text-white">${accNum}[span_82](start_span)[span_82](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Bank[span_83](start_span)[span_83](end_span)</span><span class="font-bold text-white">${bankName.toUpperCase()}[span_84](start_span)[span_84](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Amount[span_85](start_span)[span_85](end_span)</span><span class="font-bold text-[#10b981]">₦${amount.toLocaleString()}[span_86](start_span)[span_86](end_span)</span></div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 pt-2">
+                            <button onclick="document.getElementById('modal-container').innerHTML=''" class="bg-[#2a2a2a] text-white font-bold py-3.5 rounded-xl text-xs">Recheck[span_87](start_span)[span_87](end_span)</button>
+                            <button onclick="showPaymentAuthorizationModal(${amount}, '${accNum}', '${bankName}')" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl text-xs">Continue[span_88](start_span)[span_88](end_span)</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- MODAL 2: PAYMENT AUTHORIZATION & PIN / BIOMETRIC (Matching Screenshot)[span_89](start_span)[span_89](end_span) ---
+        function showPaymentAuthorizationModal(amount, accNum, bankName) {
+            const user = getStoredUsers()[getActiveUserPhone()];
+            const fee = 10.00;
+            const vat = 1.26;
+            const total = amount + fee + vat;
+
+            document.getElementById('modal-container').innerHTML = `
+                <div class="absolute inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-end justify-center p-0 md:p-4">
+                    <div class="bg-[#1e1e1e] border border-[#333] w-full max-w-md rounded-t-3xl md:rounded-3xl p-6 space-y-4 shadow-2xl">
+                        <div class="flex justify-between items-center border-b border-[#333] pb-3">
+                            <span class="text-xs text-[#10b981] font-semibold cursor-pointer">Use Payment PIN</span>
+                            <h3 class="font-bold text-white text-lg">₦${total.toLocaleString('en-NG', {minimumFractionDigits: 2})}[span_90](start_span)[span_90](end_span)</h3>
+                            <button onclick="document.getElementById('modal-container').innerHTML=''" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+
+                        <div class="bg-[#262626] p-4 rounded-xl space-y-2 text-xs">
+                            <div class="flex justify-between"><span class="text-slate-400">Bank[span_91](start_span)[span_91](end_span)</span><span class="font-bold text-white">${bankName.toUpperCase()}[span_92](start_span)[span_92](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Account Number[span_93](start_span)[span_93](end_span)</span><span class="font-bold text-white">${accNum}[span_94](start_span)[span_94](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Name[span_95](start_span)[span_95](end_span)</span><span class="font-bold text-white">TEST RECIPIENT NAME[span_96](start_span)[span_96](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Amount[span_97](start_span)[span_97](end_span)</span><span class="font-bold text-white">₦${amount.toLocaleString()}[span_98](start_span)[span_98](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">Fee[span_99](start_span)[span_99](end_span)</span><span class="font-bold text-white">₦${fee.toFixed(2)}[span_100](start_span)[span_100](end_span)</span></div>
+                            <div class="flex justify-between"><span class="text-slate-400">VAT[span_101](start_span)[span_101](end_span)</span><span class="font-bold text-white">₦${vat.toFixed(2)}[span_102](start_span)[span_102](end_span)</span></div>
+                        </div>
+
+                        <div class="bg-[#262626] p-3 rounded-xl flex items-center justify-between text-xs">
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid fa-wallet text-[#10b981]"></i>
+                                <div>
+                                    <span class="text-white block font-bold">Available Balance[span_103](start_span)[span_103](end_span)</span>
+                                    <span class="text-slate-400 text-[10px]">₦${user.balance.toLocaleString()}[span_104](start_span)[span_104](end_span)</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-2 pt-2">
+                            <input type="tel" inputmode="numeric" maxlength="4" id="final-auth-pin" placeholder="Enter 4-digit PIN" class="w-full bg-[#262626] border border-[#333] p-3 rounded-xl text-center text-xl text-white tracking-[0.5em] focus:border-[#10b981] focus:outline-none">
+                        </div>
+
+                        <button onclick="executeBankTransfer(${amount}, '${accNum}', '${bankName}')" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl transition shadow-lg">
+                            Pay[span_105](start_span)[span_105](end_span)
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- 3-STAGE LOADING ANIMATION & EXECUTION ---
+        function executeBankTransfer(amount, accNum, bankName) {
+            const pin = document.getElementById('final-auth-pin').value;
+            const senderPhone = getActiveUserPhone();
+            let users = getStoredUsers();
+            let sender = users[senderPhone];
+
+            if (pin !== sender.pin) {
+                alert('Incorrect Transaction PIN.');
+                return;
+            }
+
+            if (amount > sender.balance) {
+                alert('Insufficient balance!');
+                return;
+            }
+
+            // Run 3-stage loading animation
+            const modal = document.getElementById('modal-container');
+            modal.innerHTML = `
+                <div class="absolute inset-0 bg-black/95 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center space-y-4">
+                    <div class="w-16 h-16 rounded-full border-4 border-[#10b981]/20 border-t-[#10b981] animate-spin flex items-center justify-center"></div>
+                    <h3 class="text-white font-bold text-base">Initializing Transfer...</h3>
+                    <p class="text-xs text-slate-400">Connecting to secure banking gateway</p>
+                </div>
+            `;
+
+            setTimeout(() => {
+                modal.innerHTML = `
+                    <div class="absolute inset-0 bg-black/95 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center space-y-4">
+                        <div class="w-16 h-16 rounded-full border-4 border-[#10b981]/20 border-t-[#10b981] animate-spin flex items-center justify-center"></div>
+                        <h3 class="text-white font-bold text-base">Transferring Funds...</h3>
+                        <p class="text-xs text-slate-400">Sending to ${bankName}</p>
+                    </div>
+                `;
+
+                setTimeout(() => {
+                    // Update Balances & Ledger
+                    const txnId = 'OPY' + Math.floor(100000 + Math.random() * 900000);
+                    const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+                    sender.balance -= amount;
+                    sender.transactions.push({
+                        id: txnId,
+                        title: `Transfer to ${bankName.toUpperCase()}`,
+                        type: 'debit',
+                        amount,
+                        details: `Acc: ${accNum}`,
+                        date: dateStr
+                    });
+                    sender.notifications.push({
+                        title: 'Transfer Successful',
+                        message: `Successfully transferred ₦${amount.toLocaleString()} to ${accNum} (${bankName}).`,
+                        date: dateStr,
+                        read: false
+                    });
+
+                    saveStoredUsers(users);
+
+                    modal.innerHTML = `
+                        <div class="absolute inset-0 bg-black/95 backdrop-blur-md z-50 flex flex-col items-center justify-center p-6 text-center space-y-4 animate-in fade-in">
+                            <div class="w-20 h-20 rounded-full bg-[#10b981]/20 text-[#10b981] flex items-center justify-center text-4xl shadow-xl">
+                                <i class="fa-solid fa-check"></i>
+                            </div>
+                            <h3 class="text-white font-extrabold text-xl">Transfer Success!</h3>
+                            <p class="text-xs text-slate-300">₦${amount.toLocaleString()} sent to ${accNum} (${bankName}).</p>
+                            <button onclick="document.getElementById('modal-container').innerHTML=''; window.location.hash=''; renderApp();" class="w-full max-w-xs bg-[#10b981] text-black font-bold py-3.5 rounded-xl mt-4">
+                                Done
+                            </button>
+                        </div>
+                    `;
+                }, 1200);
+            }, 1200);
+        }
+
+        // --- OTHER SCREENS & UTILS ---
+
+        function renderHistoryScreen(user) {
             return `
                 <div class="flex-1 flex flex-col p-4 space-y-3">
                     <div class="flex items-center justify-between border-b border-[#262626] pb-3">
@@ -221,14 +637,14 @@
                         <h2 class="text-sm font-bold text-white">Transaction History</h2>
                         <div class="w-8"></div>
                     </div>
-                    ${user.transactions.length === 0 ? '<p class="text-xs text-slate-500 text-center py-10">No transactions yet.</p>' :
+                    ${user.transactions.length === 0 ? '<p class="text-xs text-slate-500 text-center py-10">No transactions recorded yet.</p>' :
                         user.transactions.slice().reverse().map(tx => `
                             <div class="bg-[#222] p-3.5 rounded-xl flex justify-between items-center text-xs">
                                 <div>
-                                    <span class="font-bold text-white block">${tx.title}</span>
+                                    <span class="font-bold text-white block mb-0.5">${tx.title}</span>
                                     <span class="text-slate-400 text-[10px]">${tx.date} •${tx.details}</span>
                                 </div>
-                                <span class="font-bold ${tx.type === 'debit' ? 'text-rose-400' : 'text-[#10b981]'}">
+                                <span class="font-bold text-sm ${tx.type === 'debit' ? 'text-rose-400' : 'text-[#10b981]'}">
                                     ${tx.type === 'debit' ? '-' : '+'}₦${tx.amount.toLocaleString()}
                                 </span>
                             </div>
@@ -238,27 +654,28 @@
             `;
         }
 
-        function renderNotifications(user) {
+        function renderNotificationsScreen(user) {
             return `
                 <div class="flex-1 flex flex-col p-4 space-y-3">
                     <div class="flex items-center justify-between border-b border-[#262626] pb-3">
                         <button onclick="window.location.hash=''" class="text-slate-400 text-sm"><i class="fa-solid fa-arrow-left mr-2"></i>Back</button>
-                        <h2 class="text-sm font-bold text-white">Notifications</h2>
-                        <div class="w-8"></div>
+                        <h2 class="text-sm font-bold text-white">Inbox & Notifications</h2>
+                        <button onclick="markNotificationsRead()" class="text-[10px] text-[#10b981] font-semibold">Mark read</button>
                     </div>
-                    ${user.notifications.slice().reverse().map(n => `
-                        <div class="bg-[#222] p-3.5 rounded-xl">
-                            <span class="text-xs font-bold text-white block mb-1"><i class="fa-solid fa-bell text-[#10b981] mr-1"></i> ${n.title}</span>
-                            <p class="text-xs text-slate-300">${n.message}</p>
-                            <span class="text-[10px] text-slate-500 mt-2 block">${n.date}</span>
-                        </div>
-                    `).join('')}
+                    ${user.notifications.length === 0 ? '<p class="text-xs text-slate-500 text-center py-10">No notifications.</p>' :
+                        user.notifications.slice().reverse().map(n => `
+                            <div class="bg-[#222] p-3.5 rounded-xl border ${n.read ? 'border-[#333]' : 'border-[#10b981]/40'}">
+                                <span class="text-xs font-bold text-white block mb-1"><i class="fa-solid fa-bell text-[#10b981] mr-1"></i> ${n.title}</span>
+                                <p class="text-xs text-slate-300">${n.message}</p>
+                                <span class="text-[10px] text-slate-500 mt-2 block">${n.date}</span>
+                            </div>
+                        `).join('')}
                     ${renderBottomNav('notifications')}
                 </div>
             `;
         }
 
-        function renderAllServices(user) {
+        function renderAllServicesScreen(user) {
             return `
                 <div class="flex-1 flex flex-col p-4 space-y-4">
                     <div class="flex items-center justify-between border-b border-[#262626] pb-3">
@@ -277,7 +694,7 @@
             `;
         }
 
-        function renderProfile(user) {
+        function renderProfileScreen(user) {
             return `
                 <div class="flex-1 flex flex-col p-4 space-y-4">
                     <div class="flex items-center justify-between border-b border-[#262626] pb-3">
@@ -285,11 +702,22 @@
                         <h2 class="text-sm font-bold text-white">Me & Security</h2>
                         <div class="w-8"></div>
                     </div>
-                    <div class="bg-[#222] p-4 rounded-2xl text-center">
+                    <div class="bg-[#222] p-4 rounded-2xl text-center space-y-1">
                         <h3 class="font-bold text-white text-base">${user.firstname} ${user.lastname}</h3>
-                        <p class="text-xs text-[#10b981] mt-1">${user.phone} • Acc: ${user.accountNumber}</p>
+                        <p class="text-xs text-[#10b981]">${user.phone} • Acc: ${user.accountNumber}</p>
                     </div>
-                    <button onclick="handleLogout()" class="w-full bg-rose-500/10 text-rose-400 font-bold py-3 rounded-xl text-xs">Sign Out</button>
+
+                    <div class="bg-[#222] p-4 rounded-2xl space-y-3">
+                        <h4 class="text-xs font-bold text-slate-400 uppercase">Security Settings</h4>
+                        <div class="flex justify-between items-center text-xs">
+                            <span class="text-slate-300">Transaction PIN</span>
+                            <button onclick="changePin()" class="text-[#10b981] font-semibold">Change PIN</button>
+                        </div>
+                    </div>
+
+                    <button onclick="handleLogout()" class="w-full bg-rose-500/10 text-rose-400 font-bold py-3 rounded-xl text-xs transition">
+                        Sign Out of OPay
+                    </button>
                     ${renderBottomNav('profile')}
                 </div>
             `;
@@ -306,100 +734,265 @@
             `;
         }
 
-        // --- MODALS & ACTIONS ---
+        function lookupOpayRecipientName() {
+            const target = document.getElementById('send-target').value.trim();
+            const nameBox = document.getElementById('recipient-name-box');
+            const nameLabel = document.getElementById('resolved-name');
+
+            if (target.length < 5) {
+                nameBox.classList.add('hidden');
+                return;
+            }
+
+            const users = getStoredUsers();
+            let foundName = null;
+
+            for (let p in users) {
+                let u = users[p];
+                if (u.phone === target || u.accountNumber === target) {
+                    foundName = `${u.firstname} ${u.lastname} (${u.accountNumber})`;
+                    break;
+                }
+            }
+
+            if (foundName) {
+                nameLabel.innerText = foundName;
+                nameBox.classList.remove('hidden');
+            } else {
+                nameLabel.innerText = 'Searching OPay network...';
+                nameBox.classList.remove('hidden');
+            }
+        }
+
+        function initiateOpayTransferFlow() {
+            const target = document.getElementById('send-target').value.trim();
+            const amount = parseFloat(document.getElementById('send-amount').value);
+
+            if (!target || isNaN(amount) || amount <= 0) {
+                alert('Please enter a valid recipient and amount.');
+                return;
+            }
+
+            const users = getStoredUsers();
+            const senderPhone = getActiveUserPhone();
+            const sender = users[senderPhone];
+
+            if (amount > sender.balance) {
+                alert('Insufficient balance!');
+                return;
+            }
+
+            let recipientPhone = null;
+            let recipientName = '';
+            for (let p in users) {
+                let u = users[p];
+                if (u.phone === target || u.accountNumber === target) {
+                    recipientPhone = p;
+                    recipientName = `${u.firstname} ${u.lastname}`;
+                    break;
+                }
+            }
+
+            if (!recipientPhone) {
+                alert('Recipient account or phone number not found in OPay network.');
+                return;
+            }
+
+            if (recipientPhone === senderPhone) {
+                alert('You cannot transfer money to yourself.');
+                return;
+            }
+
+            showPaymentAuthorizationModal(amount, users[recipientPhone].accountNumber, 'OPay Network');
+        }
 
         function openServiceModal(serviceName) {
             document.getElementById('modal-container').innerHTML = `
-                <div class="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-end justify-center p-4">
-                    <div class="bg-[#1e1e1e] border border-[#333] w-full rounded-3xl p-6 space-y-4 shadow-2xl">
-                        <div class="flex justify-between items-center border-b border-[#333] pb-2">
+                <div class="absolute inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-end justify-center p-0 md:p-4">
+                    <div class="bg-[#1e1e1e] border border-[#333] w-full max-w-md rounded-t-3xl md:rounded-3xl p-6 space-y-4 shadow-2xl">
+                        <div class="flex justify-between items-center border-b border-[#333] pb-3">
                             <h3 class="font-bold text-white text-sm">Simulate ${serviceName}</h3>
-                            <button onclick="document.getElementById('modal-container').innerHTML=''" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+                            <button onclick="document.getElementById('modal-container').innerHTML=''" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
                         </div>
-                        <input type="text" id="srv-target" placeholder="Recipient / Meter / ID" class="w-full bg-[#262626] border border-[#333] p-3 rounded-xl text-sm text-white">
-                        <input type="number" id="srv-amount" placeholder="Amount (₦)" class="w-full bg-[#262626] border border-[#333] p-3 rounded-xl text-sm text-white">
-                        <input type="tel" inputmode="numeric" maxLength="4" id="srv-pin" placeholder="4-digit PIN" class="w-full bg-[#262626] border border-[#333] p-3 rounded-xl text-sm text-white tracking-widest">
-                        <button onclick="executeService('${serviceName}')" class="w-full bg-[#10b981] text-black font-bold py-3 rounded-xl">Pay Now</button>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Recipient / Target / Meter ID</label>
+                            <input type="text" id="srv-target" placeholder="Enter target details" class="w-full bg-[#262626] border border-[#333] p-3 rounded-xl text-sm text-white focus:outline-none focus:border-[#10b981]">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Amount (₦)</label>
+                            <input type="number" id="srv-amount" placeholder="1000" class="w-full bg-[#262626] border border-[#333] p-3 rounded-xl text-sm text-white focus:outline-none focus:border-[#10b981]">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Transaction PIN (4 digits)</label>
+                            <input type="tel" inputmode="numeric" maxlength="4" id="srv-pin" placeholder="••••" class="w-full bg-[#262626] border border-[#333] p-3 rounded-xl text-sm text-white tracking-widest focus:outline-none focus:border-[#10b981]">
+                        </div>
+                        <button onclick="executeService('${serviceName}')" class="w-full bg-[#10b981] text-black font-bold py-3.5 rounded-xl transition mt-2">Pay ${serviceName}</button>
                     </div>
                 </div>
             `;
         }
 
-        async function executeService(serviceName) {
-            const target = document.getElementById('srv-target').value;
+        function executeService(serviceName) {
+            const target = document.getElementById('srv-target').value.trim();
             const amount = parseFloat(document.getElementById('srv-amount').value);
             const pin = document.getElementById('srv-pin').value;
 
-            const res = await request('/api/service', { phone: session, serviceName, target, amount, pin });
-            if (res.success) {
-                alert(res.message);
-                window.location.hash = '';
-                renderApp();
-            } else {
-                alert(res.message);
-            }
-        }
+            const phone = getActiveUserPhone();
+            let users = getStoredUsers();
+            let user = users[phone];
 
-        async function toggleBalanceVisibility() {
-            // Toggle local hide state in session/db if needed
+            if (!target || isNaN(amount) || amount <= 0 || !pin) {
+                alert('Please fill out all fields correctly.');
+                return;
+            }
+
+            if (pin !== user.pin) {
+                alert('Incorrect Transaction PIN.');
+                return;
+            }
+
+            if (amount > user.balance) {
+                alert('Insufficient virtual balance!');
+                return;
+            }
+
+            const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            user.balance -= amount;
+            user.transactions.push({
+                id: 'SRV' + Math.floor(100000 + Math.random() * 900000),
+                title: `${serviceName} Payment`,
+                type: 'debit',
+                amount,
+                details: `Target: ${target}`,
+                date: dateStr
+            });
+            user.notifications.push({
+                title: `${serviceName} Successful`,
+                message: `Successfully paid ₦${amount.toLocaleString()} for ${serviceName} to (${target}).`,
+                date: dateStr,
+                read: false
+            });
+
+            saveStoredUsers(users);
+            document.getElementById('modal-container').innerHTML = '';
+            alert(`${serviceName} payment of ₦${amount.toLocaleString()} successful!`);
             renderApp();
         }
 
-        async function handleRegister(e) {
+        function toggleBalanceVisibility() {
+            let phone = getActiveUserPhone();
+            let users = getStoredUsers();
+            users[phone].hideBalance = !users[phone].hideBalance;
+            saveStoredUsers(users);
+            renderApp();
+        }
+
+        function changePin() {
+            const newPin = prompt('Enter new 4-digit Transaction PIN:');
+            if (newPin && newPin.length === 4) {
+                let users = getStoredUsers();
+                let phone = getActiveUserPhone();
+                users[phone].pin = newPin;
+                saveStoredUsers(users);
+                alert('Transaction PIN updated successfully!');
+            } else if (newPin) {
+                alert('PIN must be exactly 4 digits.');
+            }
+        }
+
+        function markNotificationsRead() {
+            let users = getStoredUsers();
+            let phone = getActiveUserPhone();
+            users[phone].notifications.forEach(n => n.read = true);
+            saveStoredUsers(users);
+            renderApp();
+        }
+
+        function handleRegister(e) {
             e.preventDefault();
-            const data = {
-                firstname: document.getElementById('reg-fn').value,
-                lastname: document.getElementById('reg-ln').value,
-                phone: document.getElementById('reg-ph').value,
-                email: document.getElementById('reg-em').value,
-                password: document.getElementById('reg-pw').value,
-                pin: document.getElementById('reg-pin').value
+            const firstname = document.getElementById('reg-firstname').value.trim();
+            const lastname = document.getElementById('reg-lastname').value.trim();
+            const phone = document.getElementById('reg-phone').value.trim();
+            const email = document.getElementById('reg-email').value.trim();
+            const password = document.getElementById('reg-password').value;
+
+            let users = getStoredUsers();
+            if (users[phone]) {
+                alert('An account with this phone number already exists.');
+                return;
+            }
+
+            const tempData = { firstname, lastname, phone, email, password };
+            localStorage.setItem(DB_KEYS.PENDING_REG, JSON.stringify(tempData));
+            renderApp();
+        }
+
+        function finalizeRegistration(tempPhoneJSON) {
+            const pin = document.getElementById('setup-pin').value.trim();
+            if (pin.length !== 4) {
+                alert('Transaction PIN must be exactly 4 digits.');
+                return;
+            }
+
+            const tempData = JSON.parse(localStorage.getItem(DB_KEYS.PENDING_REG));
+            localStorage.removeItem(DB_KEYS.PENDING_REG);
+
+            let users = getStoredUsers();
+            const accountNumber = generateAccountNumber();
+            const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+            users[tempData.phone] = {
+                ...tempData,
+                pin,
+                accountNumber,
+                balance: 500000000,
+                hideBalance: false,
+                transactions: [],
+                notifications: [{
+                    title: 'Welcome Bonus Credited',
+                    message: 'Your account has been successfully created. Your starting virtual balance of ₦500,000,000 is now active and ready for simulation.',
+                    date: dateStr,
+                    read: false
+                }]
             };
-            const res = await request('/api/register', data);
-            if (res.success) {
-                session = res.phone;
-                localStorage.setItem('opay_session', session);
-                window.location.hash = '';
-                renderApp();
-            } else {
-                alert(res.message);
-            }
+
+            saveStoredUsers(users);
+            setActiveUserPhone(tempData.phone);
+            alert('Account created successfully with ₦500,000,000 starting balance!');
+            window.location.hash = '';
+            renderApp();
         }
 
-        async function handleLogin(e) {
+        function handleLogin(e) {
             e.preventDefault();
-            const res = await request('/api/login', {
-                identifier: document.getElementById('log-id').value,
-                password: document.getElementById('log-pw').value
-            });
-            if (res.success) {
-                session = res.phone;
-                localStorage.setItem('opay_session', session);
-                window.location.hash = '';
-                renderApp();
-            } else {
-                alert(res.message);
-            }
-        }
+            const identifier = document.getElementById('login-identifier').value.trim();
+            const password = document.getElementById('login-password').value;
 
-        async function executeTransfer() {
-            const recipientTarget = document.getElementById('send-target').value;
-            const amount = parseFloat(document.getElementById('send-amount').value);
-            const pin = document.getElementById('send-pin').value;
+            let users = getStoredUsers();
+            let foundPhone = null;
 
-            const res = await request('/api/transfer', { senderPhone: session, recipientTarget, amount, pin });
-            if (res.success) {
-                alert(res.message);
-                window.location.hash = '';
-                renderApp();
-            } else {
-                alert(res.message);
+            for (let phone in users) {
+                let u = users[phone];
+                if (u.phone === identifier || u.email === identifier) {
+                    if (u.password === password) {
+                        foundPhone = phone;
+                        break;
+                    }
+                }
             }
+
+            if (!foundPhone) {
+                alert('Invalid phone/email or password.');
+                return;
+            }
+
+            setActiveUserPhone(foundPhone);
+            window.location.hash = '';
+            renderApp();
         }
 
         function handleLogout() {
-            session = null;
-            localStorage.removeItem('opay_session');
+            setActiveUserPhone(null);
             window.location.hash = '';
             renderApp();
         }
