@@ -1,390 +1,60 @@
 import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import rateLimit from "express-rate-limit";
-import argon2 from "argon2";
-import { z } from "zod";
-import { prisma } from "./db.js";
-import { asyncRoute, requireAuth } from "./middleware.js";
-import { hashToken, signAccess, signRefresh, verifyRefresh } from "./auth.js";
-import { internalTransfer } from "./transactionService.js";
-import { idempotencyKey, reference } from "./utils.js";
-import { Prisma } from "@prisma/client";
-
-const app = express();
-const port = Number(process.env.PORT || 4000);
-
-app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173" }));
-app.use(express.json({ limit: "100kb" }));
-
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 50 });
-const moneyLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30 });
-
-app.get("/api/health", (_req, res) => res.json({ success: true, service: "internal-wallet" }));
-
-app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({
-    firstName: z.string().min(2).max(60),
-    lastName: z.string().min(2).max(60),
-    username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/),
-    phone: z.string().regex(/^0\d{10}$/),
-    email: z.string().email(),
-    password: z.string().min(8).max(128),
-    pin: z.string().regex(/^\d{4}$/)
-  }).parse(req.body);
-
-  const exists = await prisma.user.findFirst({
-    where: { OR: [{ phone: body.phone }, { email: body.email }, { username: body.username }] }
-  });
-  if (exists) return res.status(409).json({ success: false, code: "ACCOUNT_EXISTS", message: "Phone, email or username is already registered." });
-
-  const passwordHash = await argon2.hash(body.password);
-  const pinHash = await argon2.hash(body.pin);
-  const accountNumber = `81${Math.floor(10000000 + Math.random() * 90000000)}`;
-
-  const user = await prisma.$transaction(async (tx) => {
-    const u = await tx.user.create({
-      data: {
-        firstName: body.firstName,
-        lastName: body.lastName,
-        username: body.username,
-        phone: body.phone,
-        email: body.email,
-        passwordHash,
-        pinHash,
-        accountNumber
-      }
-    });
-    await tx.wallet.create({ data: { userId: u.id, balance: 500000000 } });
-    await tx.notification.create({
-      data: {
-        userId: u.id,
-        type: "SYSTEM",
-        title: "Welcome",
-        message: "Your internal wallet has been created."
-      }
-    });
-    return u;
-  });
-
-  const access = signAccess(user.id);
-  const refresh = signRefresh(user.id);
-  await prisma.session.create({
-    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 7 * 86400000) }
-  });
-
-  res.status(201).json({ success: true, accessToken: access, refreshToken: refresh });
-}));
-
-app.post("/api/auth/login", authLimiter, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({
-    identifier: z.string(),
-    password: z.string()
-  }).parse(req.body);
-
-  const user = await prisma.user.findFirst({
-    where: { OR: [{ phone: body.identifier }, { email: body.identifier }] }
-  });
-
-  if (!user || !(await argon2.verify(user.passwordHash, body.password))) {
-    return res.status(401).json({ success: false, code: "INVALID_LOGIN", message: "Invalid login details." });
-  }
-
-  if (user.status !== "ACTIVE") {
-    return res.status(403).json({ success: false, code: "ACCOUNT_LOCKED", message: "Account is not active." });
-  }
-
-  const access = signAccess(user.id);
-  const refresh = signRefresh(user.id);
-  await prisma.session.create({
-    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 7 * 86400000) }
-  });
-
-  res.json({ success: true, accessToken: access, refreshToken: refresh });
-}));
-
-app.post("/api/auth/refresh", asyncRoute(async (req: any, res: any) => {
-  const { refreshToken } = z.object({ refreshToken: z.string() }).parse(req.body);
-  try {
-    const payload = verifyRefresh(refreshToken);
-    const session = await prisma.session.findFirst({
-      where: { userId: payload.sub, refreshHash: hashToken(refreshToken), expiresAt: { gt: new Date() } }
-    });
-    if (!session) return res.status(401).json({ success: false, code: "INVALID_REFRESH", message: "Refresh session invalid." });
-    res.json({ success: true, accessToken: signAccess(payload.sub) });
-  } catch {
-    res.status(401).json({ success: false, code: "INVALID_REFRESH", message: "Refresh session invalid." });
-  }
-}));
-
-app.post("/api/auth/logout", requireAuth, asyncRoute(async (req: any, res: any) => {
-  await prisma.session.deleteMany({ where: { userId: req.userId } });
-  res.json({ success: true });
-}));
-
-app.get("/api/me", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.userId },
-    include: { wallet: true }
-  });
-  if (!user) return res.status(404).json({ success: false, message: "User not found" });
-  res.json({
-    success: true,
-    user: {
-      id: user.id,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      username: user.username,
-      phone: user.phone,
-      email: user.email,
-      accountNumber: user.accountNumber,
-      balance: user.wallet?.balance.toString() ?? "0"
-    }
-  });
-}));
-
-app.get("/api/users/lookup", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const q = String(req.query.q || "").trim();
-  if (q.length < 3) return res.status(400).json({ success: false, message: "Search is too short." });
-
-  const user = await prisma.user.findFirst({
-    where: {
-      status: "ACTIVE",
-      OR: [{ phone: q }, { accountNumber: q }, { username: q }]
-    },
-    select: { id: true, firstName: true, lastName: true, username: true, accountNumber: true }
-  });
-
-  if (!user || user.id === req.userId) return res.status(404).json({ success: false, message: "Recipient not found." });
-  res.json({ success: true, recipient: user });
-}));
-
-app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({
-    recipientId: z.string(),
-    amount: z.coerce.number().positive().max(50000000),
-    narration: z.string().max(140).optional(),
-    pin: z.string().regex(/^\d{4}$/)
-  }).parse(req.body);
-
-  const user = await prisma.user.findUnique({ where: { id: req.userId } });
-  if (!user) return res.status(404).json({ success: false, message: "User not found." });
-
-  if (user.pinLockedUntil && user.pinLockedUntil > new Date()) {
-    return res.status(423).json({ success: false, code: "PIN_LOCKED", message: "Transaction PIN is temporarily locked." });
-  }
-
-  const validPin = await argon2.verify(user.pinHash, body.pin);
-  if (!validPin) {
-    const failures = user.pinFailures + 1;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        pinFailures: failures >= 5 ? 0 : failures,
-        pinLockedUntil: failures >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null
-      }
-    });
-    return res.status(401).json({ success: false, code: "INVALID_PIN", message: "Incorrect transaction PIN." });
-  }
-
-  await prisma.user.update({ where: { id: user.id }, data: { pinFailures: 0, pinLockedUntil: null } });
-
-  try {
-    const transaction = await internalTransfer(
-      req.userId,
-      body.recipientId,
-      new Prisma.Decimal(body.amount.toFixed(2)),
-      body.narration,
-      idempotencyKey(req)
-    );
-    res.json({ success: true, transaction });
-  } catch (e: any) {
-    const code = e.message || "TRANSFER_FAILED";
-    const status = code === "INSUFFICIENT_BALANCE" ? 400 : code === "IDEMPOTENCY_KEY_REQUIRED" ? 400 : 409;
-    res.status(status).json({ success: false, code, message: friendlyError(code) });
-  }
-}));
-
-app.get("/api/transactions", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const rows = await prisma.transaction.findMany({
-    where: { OR: [{ senderId: req.userId }, { receiverId: req.userId }] },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-    include: { sender: { select: { firstName: true, lastName: true, accountNumber: true } }, receiver: { select: { firstName: true, lastName: true, accountNumber: true } } }
-  });
-  res.json({ success: true, transactions: rows });
-}));
-
-app.get("/api/notifications", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const rows = await prisma.notification.findMany({
-    where: { userId: req.userId },
-    orderBy: { createdAt: "desc" },
-    take: 100
-  });
-  res.json({ success: true, notifications: rows });
-}));
-
-app.post("/api/notifications/read-all", requireAuth, asyncRoute(async (req: any, res: any) => {
-  await prisma.notification.updateMany({ where: { userId: req.userId }, data: { read: true } });
-  res.json({ success: true });
-}));
-
-app.get("/api/banks", requireAuth, asyncRoute(async (_req: any, res: any) => {
-  res.json({ success: true, banks: await prisma.bank.findMany({ orderBy: { name: "asc" } }) });
-}));
-
-app.get("/api/banks/lookup", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const accountNumber = String(req.query.accountNumber || "");
-  const bankCode = String(req.query.bankCode || "");
-  const account = await prisma.bankAccount.findFirst({
-    where: { accountNumber, active: true, bank: { code: bankCode } },
-    include: { bank: true }
-  });
-  if (!account) return res.status(404).json({ success: false, message: "Simulated account not found." });
-  res.json({ success: true, account: { accountNumber: account.accountNumber, accountName: account.accountName, bank: account.bank.name, bankCode } });
-}));
-
-app.post("/api/services/payment", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({
-    type: z.enum(["AIRTIME", "DATA", "ELECTRICITY", "TV", "INTERNET", "WATER", "EDUCATION"]),
-    target: z.string().min(3).max(100),
-    amount: z.coerce.number().positive().max(10000000),
-    pin: z.string().regex(/^\d{4}$/)
-  }).parse(req.body);
-
-  const user = await prisma.user.findUnique({ where: { id: req.userId }, include: { wallet: true } });
-  if (!user?.wallet) return res.status(404).json({ success: false, message: "Wallet not found." });
-
-  if (!(await argon2.verify(user.pinHash, body.pin))) {
-    return res.status(401).json({ success: false, code: "INVALID_PIN", message: "Incorrect transaction PIN." });
-  }
-
-  const amount = new Prisma.Decimal(body.amount.toFixed(2));
-  if (user.wallet.balance.lt(amount)) {
-    return res.status(400).json({ success: false, code: "INSUFFICIENT_BALANCE", message: "Insufficient wallet balance." });
-  }
-
-  const transaction = await prisma.$transaction(async tx => {
-    const created = await tx.transaction.create({
-      data: {
-        reference: reference("PAY"),
-        senderId: user.id,
-        type: body.type as any,
-        status: "PROCESSING",
-        amount,
-        total: amount,
-        recipientAccount: body.target,
-        metadata: { simulated: true }
-      }
-    });
-
-    await tx.wallet.update({ where: { userId: user.id }, data: { balance: { decrement: amount } } });
-    await tx.transaction.update({ where: { id: created.id }, data: { status: "SUCCESS", completedAt: new Date() } });
-    await tx.transactionEntry.create({ data: { transactionId: created.id, userId: user.id, type: "DEBIT", amount } });
-    await tx.notification.create({
-      data: {
-        userId: user.id,
-        type: "PAYMENT",
-        title: `${body.type} Successful`,
-        message: `₦${amount.toFixed(2)} simulated ${body.type.toLowerCase()} payment to ${body.target}.`
-      }
-    });
-    return tx.transaction.findUnique({ where: { id: created.id } });
-  });
-
-  res.json({ success: true, transaction });
-}));
-
-app.get("/api/savings", requireAuth, asyncRoute(async (req: any, res: any) => {
-  res.json({ success: true, savings: await prisma.savingsAccount.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } }) });
-}));
-
-app.post("/api/savings", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({
-    name: z.string().min(2).max(60),
-    type: z.enum(["DAILY", "TARGET", "FIXED", "SAFEBOX"]),
-    targetAmount: z.coerce.number().positive().optional()
-  }).parse(req.body);
-
-  const savings = await prisma.savingsAccount.create({
-    data: {
-      userId: req.userId!,
-      name: body.name,
-      type: body.type,
-      targetAmount: body.targetAmount
-    }
-  });
-  res.status(201).json({ success: true, savings });
-}));
-
-app.get("/api/cards", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const cards = await prisma.card.findMany({
-    where: { userId: req.userId },
-    select: { id: true, maskedNumber: true, last4: true, expiryMonth: true, expiryYear: true, status: true, spendingLimit: true, createdAt: true }
-  });
-  res.json({ success: true, cards });
-}));
-
-app.post("/api/cards/:id/freeze", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const card = await prisma.card.findFirst({ where: { id: req.params.id, userId: req.userId } });
-  if (!card) return res.status(404).json({ success: false, message: "Card not found." });
-  const updated = await prisma.card.update({ where: { id: card.id }, data: { status: card.status === "FROZEN" ? "ACTIVE" : "FROZEN" } });
-  res.json({ success: true, card: updated });
-}));
-
-app.get("/api/loans", requireAuth, asyncRoute(async (req: any, res: any) => {
-  res.json({ success: true, loans: await prisma.loan.findMany({ where: { userId: req.userId }, orderBy: { createdAt: "desc" } }) });
-}));
-
-app.post("/api/loans", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({
-    amount: z.coerce.number().positive().max(100000000),
-    durationMonths: z.coerce.number().int().min(1).max(60)
-  }).parse(req.body);
-  const amount = new Prisma.Decimal(body.amount.toFixed(2));
-  const interest = amount.mul(new Prisma.Decimal("0.10"));
-  const loan = await prisma.loan.create({
-    data: {
-      userId: req.userId!,
-      amount,
-      interest,
-      totalRepayable: amount.add(interest),
-      durationMonths: body.durationMonths,
-      status: "PENDING"
-    }
-  });
-  res.status(201).json({ success: true, loan });
-}));
-
-app.get("/api/admin/users", requireAuth, asyncRoute(async (req: any, res: any) => {
-  // Demo admin gate: a real production system should use a dedicated Role model.
-  const me = await prisma.user.findUnique({ where: { id: req.userId } });
-  if (me?.email !== "admin@example.com") return res.status(403).json({ success: false, message: "Admin only." });
-  const users = await prisma.user.findMany({
-    orderBy: { createdAt: "desc" },
-    select: { id: true, firstName: true, lastName: true, username: true, phone: true, email: true, accountNumber: true, status: true, createdAt: true }
-  });
-  res.json({ success: true, users });
-}));
-
-function friendlyError(code: string) {
-  const map: Record<string, string> = {
-    IDEMPOTENCY_KEY_REQUIRED: "A transaction request key is required.",
-    INVALID_AMOUNT: "Enter a valid amount.",
-    SELF_TRANSFER: "You cannot transfer money to yourself.",
-    ACCOUNT_NOT_FOUND: "Sender or recipient account was not found.",
-    ACCOUNT_NOT_ACTIVE: "One of the accounts is not active.",
-    INSUFFICIENT_BALANCE: "Insufficient wallet balance."
-  };
-  return map[code] || "The transaction could not be completed.";
-}
-
-app.use((err: any, _req: any, res: any, _next: any) => {
-  console.error(err);
-  if (err?.name === "ZodError") return res.status(400).json({ success: false, code: "VALIDATION_ERROR", message: "Check the submitted information." });
-  res.status(500).json({ success: false, code: "SERVER_ERROR", message: "Something went wrong." });
-});
-
-app.listen(port, () => console.log(`Backend running on http://localhost:${port}`));
+import express from "express"; import cors from "cors"; import helmet from "helmet"; import rateLimit from "express-rate-limit"; import argon2 from "argon2"; import crypto from "node:crypto";
+import { z } from "zod"; import { Prisma, PrismaClient } from "@prisma/client";
+import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from "@simplewebauthn/server";
+import { prisma } from "./db.js"; import { requireAuth, asyncRoute } from "./middleware.js"; import { signAccess, signRefresh, verifyRefresh, hashToken } from "./auth.js"; import { internalTransfer } from "./transactionService.js"; import { reference, idempotencyKey } from "./utils.js";
+const app=express(); const port=Number(process.env.PORT||4000); const rpID=process.env.WEBAUTHN_RP_ID||"localhost"; const origin=process.env.WEBAUTHN_ORIGIN||`http://${rpID}:5173`;
+app.use(helmet()); app.use(cors({origin:process.env.FRONTEND_ORIGIN||"http://localhost:5173"})); app.use(express.json({limit:"200kb"}));
+const authLimiter=rateLimit({windowMs:15*60*1000,limit:60}); const moneyLimiter=rateLimit({windowMs:60*1000,limit:30});
+const amount=s=>z.coerce.number().positive().finite().max(1000000000);
+async function audit(actorId:string|undefined,action:string,req:any,targetType?:string,targetId?:string,metadata?:any){await prisma.auditLog.create({data:{actorId,action,targetType,targetId,ip:req.ip,metadata}}).catch(()=>{});}
+async function notify(userId:string,title:string,message:string,type:any){await prisma.notification.create({data:{userId,title,message,type}});}
+function money(n:any){return new Prisma.Decimal(String(n));}
+function nowHour(){return new Date().getHours();}
+async function pinCheck(user:any,pin:string){if(user.pinLockedUntil&&user.pinLockedUntil>new Date())throw Object.assign(new Error("PIN_LOCKED"),{status:423}); if(await argon2.verify(user.pinHash,pin)){await prisma.user.update({where:{id:user.id},data:{pinFailures:0,pinLockedUntil:null}});return true;} const f=user.pinFailures+1; await prisma.user.update({where:{id:user.id},data:{pinFailures:f>=5?0:f,pinLockedUntil:f>=5?new Date(Date.now()+15*60*1000):null}}); throw Object.assign(new Error("INVALID_PIN"),{status:401});}
+function needsShield(user:any,value:number){const night=user.nightGuard && (nowHour()>=0&&nowHour()<5); const large=user.largeShield && value>=Number(process.env.LARGE_TX_THRESHOLD||5000000); return {night,large,required:night||large};}
+app.get("/api/health",(_q,r)=>r.json({success:true,service:"internal-wallet",time:new Date().toISOString()}));
+app.post("/api/auth/register",authLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({firstName:z.string().min(2),lastName:z.string().min(2),username:z.string().min(3).max(30).regex(/^[A-Za-z0-9_]+$/),phone:z.string().regex(/^0\d{10}$/),email:z.string().email(),password:z.string().min(8),pin:z.string().regex(/^\d{4}$/)}).parse(req.body); if(await prisma.user.findFirst({where:{OR:[{phone:b.phone},{email:b.email},{username:b.username}]}}))return res.status(409).json({success:false,message:"Phone, email or username already exists."}); const u=await prisma.$transaction(async tx=>{const user=await tx.user.create({data:{firstName:b.firstName,lastName:b.lastName,username:b.username,phone:b.phone,email:b.email,passwordHash:await argon2.hash(b.password),pinHash:await argon2.hash(b.pin),accountNumber:`01${crypto.randomInt(10000000,99999999)}`}}); await tx.wallet.create({data:{userId:user.id,balance:500000000}}); await tx.notification.create({data:{userId:user.id,title:"Welcome",message:"Your wallet is ready.",type:"SYSTEM"}}); return user}); const access=signAccess(u.id),refresh=signRefresh(u.id); await prisma.session.create({data:{userId:u.id,refreshHash:hashToken(refresh),expiresAt:new Date(Date.now()+7*864e5)}}); await audit(u.id,"AUTH_REGISTER",req); res.status(201).json({success:true,accessToken:access,refreshToken:refresh});}));
+app.post("/api/auth/login",authLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({identifier:z.string(),password:z.string()}).parse(req.body); const u=await prisma.user.findFirst({where:{OR:[{phone:b.identifier},{email:b.identifier},{username:b.identifier}]}}); if(!u||!(await argon2.verify(u.passwordHash,b.password)))return res.status(401).json({success:false,message:"Invalid login details."}); if(u.status!=="ACTIVE")return res.status(403).json({success:false,message:"Account is not active."}); const access=signAccess(u.id),refresh=signRefresh(u.id); await prisma.session.create({data:{userId:u.id,refreshHash:hashToken(refresh),expiresAt:new Date(Date.now()+7*864e5)}}); await audit(u.id,"AUTH_LOGIN",req); res.json({success:true,accessToken:access,refreshToken:refresh});}));
+app.post("/api/auth/refresh",asyncRoute(async(req:any,res:any)=>{try{const {refreshToken}=z.object({refreshToken:z.string()}).parse(req.body);const p=verifyRefresh(refreshToken);const s=await prisma.session.findFirst({where:{userId:p.sub,refreshHash:hashToken(refreshToken),expiresAt:{gt:new Date()}}});if(!s)throw 0;res.json({success:true,accessToken:signAccess(p.sub)})}catch{res.status(401).json({success:false,message:"Invalid refresh session."})}}));
+app.post("/api/auth/logout",requireAuth,asyncRoute(async(req:any,res:any)=>{await prisma.session.deleteMany({where:{userId:req.userId}});res.json({success:true})}));
+app.get("/api/me",requireAuth,asyncRoute(async(req:any,res:any)=>{const u=await prisma.user.findUnique({where:{id:req.userId},include:{wallet:true}});if(!u)return res.status(404).end();res.json({success:true,user:{id:u.id,firstName:u.firstName,lastName:u.lastName,username:u.username,phone:u.phone,email:u.email,accountNumber:u.accountNumber,balance:u.wallet?.balance.toString()||"0",role:u.role,status:u.status,nightGuard:u.nightGuard,largeShield:u.largeShield}})}));
+app.post("/api/auth/forgot/request",authLimiter,asyncRoute(async(req:any,res:any)=>{const {identifier}=z.object({identifier:z.string()}).parse(req.body);const u=await prisma.user.findFirst({where:{OR:[{email:identifier},{phone:identifier},{username:identifier}]}});if(!u)return res.json({success:true,message:"If the account exists, a code has been created."});const code=String(crypto.randomInt(100000,999999));await prisma.otpChallenge.create({data:{userId:u.id,type:"PASSWORD_RESET",codeHash:await argon2.hash(code),expiresAt:new Date(Date.now()+10*60*1000)}}); await audit(u.id,"PASSWORD_RESET_REQUEST",req); res.json({success:true,devCode:process.env.NODE_ENV!=="production"?code:undefined,message:"Verification code created."})}));
+app.post("/api/auth/forgot/confirm",authLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({identifier:z.string(),code:z.string().length(6),newPassword:z.string().min(8)}).parse(req.body);const u=await prisma.user.findFirst({where:{OR:[{email:b.identifier},{phone:b.identifier},{username:b.identifier}]}});if(!u)return res.status(400).json({success:false,message:"Invalid verification."});const c=await prisma.otpChallenge.findFirst({where:{userId:u.id,type:"PASSWORD_RESET",usedAt:null,expiresAt:{gt:new Date()}},orderBy:{createdAt:"desc"}});if(!c||!(await argon2.verify(c.codeHash,b.code)))return res.status(400).json({success:false,message:"Invalid or expired code."});await prisma.$transaction([prisma.user.update({where:{id:u.id},data:{passwordHash:await argon2.hash(b.newPassword)}}),prisma.otpChallenge.update({where:{id:c.id},data:{usedAt:new Date()}}),prisma.session.deleteMany({where:{userId:u.id}})]);await audit(u.id,"PASSWORD_RESET_COMPLETE",req);res.json({success:true})}));
+app.post("/api/security/change-password",requireAuth,asyncRoute(async(req:any,res:any)=>{const b=z.object({currentPassword:z.string(),newPassword:z.string().min(8)}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});if(!(await argon2.verify(u.passwordHash,b.currentPassword)))return res.status(401).json({success:false,message:"Current password is incorrect."});await prisma.user.update({where:{id:u.id},data:{passwordHash:await argon2.hash(b.newPassword)}});await audit(u.id,"PASSWORD_CHANGED",req);res.json({success:true})}));
+app.post("/api/security/change-pin",requireAuth,asyncRoute(async(req:any,res:any)=>{const b=z.object({currentPin:z.string().regex(/^\d{4}$/),newPin:z.string().regex(/^\d{4}$/)}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});await pinCheck(u,b.currentPin);await prisma.user.update({where:{id:u.id},data:{pinHash:await argon2.hash(b.newPin)}});await audit(u.id,"PIN_CHANGED",req);res.json({success:true})}));
+app.get("/api/users/lookup",requireAuth,asyncRoute(async(req:any,res:any)=>{const q=String(req.query.q||"");const u=await prisma.user.findFirst({where:{status:"ACTIVE",OR:[{phone:q},{accountNumber:q},{username:q}]},select:{id:true,firstName:true,lastName:true,username:true,accountNumber:true}});if(!u||u.id===req.userId)return res.status(404).json({success:false,message:"Recipient not found."});res.json({success:true,recipient:u})}));
+app.get("/api/security/policy",requireAuth,asyncRoute(async(req:any,res:any)=>{const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});res.json({success:true,nightGuard:u.nightGuard,largeShield:u.largeShield,largeThreshold:Number(process.env.LARGE_TX_THRESHOLD||5000000)})}));
+app.post("/api/security/policy",requireAuth,asyncRoute(async(req:any,res:any)=>{const b=z.object({nightGuard:z.boolean().optional(),largeShield:z.boolean().optional()}).parse(req.body);const u=await prisma.user.update({where:{id:req.userId},data:b});await audit(u.id,"SECURITY_POLICY_CHANGED",req,undefined,undefined,b);res.json({success:true,nightGuard:u.nightGuard,largeShield:u.largeShield})}));
+app.post("/api/transfers/internal",requireAuth,moneyLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({recipientId:z.string(),amount:amount(0),narration:z.string().max(140).optional(),pin:z.string().regex(/^\d{4}$/),stepUpToken:z.string().optional()}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});const shield=needsShield(u,b.amount);if(shield.required&&!b.stepUpToken)return res.status(428).json({success:false,code:"STEP_UP_REQUIRED",reasons:[shield.night?"NIGHTGUARD":"",shield.large?"LARGE_TRANSACTION":""].filter(Boolean)});await pinCheck(u,b.pin);try{const tx=await internalTransfer(req.userId,b.recipientId,money(b.amount),b.narration,idempotencyKey(req));await notify(req.userId,"Transfer successful",`₦${b.amount.toLocaleString()} sent.`,"TRANSFER_SENT");await audit(req.userId,"TRANSFER_INTERNAL",req, "Transaction",tx.id,{amount:b.amount});res.json({success:true,transaction:tx})}catch(e:any){res.status(e.message==="INSUFFICIENT_BALANCE"?400:409).json({success:false,code:e.message,message:e.message})}}));
+app.get("/api/transactions",requireAuth,asyncRoute(async(req:any,res:any)=>{const q=String(req.query.q||"").trim();const type=String(req.query.type||"");const status=String(req.query.status||"");const from=req.query.from?new Date(String(req.query.from)):undefined;const to=req.query.to?new Date(String(req.query.to)):undefined;const rows=await prisma.transaction.findMany({where:{OR:[{senderId:req.userId},{receiverId:req.userId}],AND:[q?{OR:[{reference:{contains:q,mode:"insensitive"}},{narration:{contains:q,mode:"insensitive"}},{recipientName:{contains:q,mode:"insensitive"}}]}:{},type&&type!=="ALL"?{type:type as any}:{},status&&status!=="ALL"?{status:status as any}:{},from||to?{createdAt:{...(from?{gte:from}:{}),...(to?{lte:to}:{})}}:{}]},orderBy:{createdAt:"desc"},take:200});res.json({success:true,transactions:rows})}));
+app.get("/api/transactions/:id/receipt",requireAuth,asyncRoute(async(req:any,res:any)=>{const t=await prisma.transaction.findFirst({where:{id:req.params.id,OR:[{senderId:req.userId},{receiverId:req.userId}]},include:{sender:true,receiver:true}});if(!t)return res.status(404).end();res.type("html").send(`<html><body style="font-family:Arial;padding:30px"><h1>Wallet Receipt</h1><p><b>${t.reference}</b></p><p>${t.type}</p><h2>₦${t.amount}</h2><p>Status: ${t.status}</p><p>${t.narration||""}</p><p>${t.createdAt.toISOString()}</p></body></html>`) }));
+app.get("/api/notifications",requireAuth,asyncRoute(async(req:any,res:any)=>res.json({success:true,notifications:await prisma.notification.findMany({where:{userId:req.userId},orderBy:{createdAt:"desc"},take:100})}));
+app.post("/api/notifications/read-all",requireAuth,asyncRoute(async(req:any,res:any)=>{await prisma.notification.updateMany({where:{userId:req.userId},data:{read:true}});res.json({success:true})}));
+app.get("/api/notifications/stream",requireAuth,asyncRoute(async(req:any,res:any)=>{res.setHeader("Content-Type","text/event-stream");res.setHeader("Cache-Control","no-cache");res.setHeader("Connection","keep-alive");const timer=setInterval(async()=>{const n=await prisma.notification.findFirst({where:{userId:req.userId,read:false},orderBy:{createdAt:"desc"}});if(n)res.write(`data: ${JSON.stringify(n)}\n\n`)},3000);req.on("close",()=>clearInterval(timer));}));
+app.get("/api/savings",requireAuth,asyncRoute(async(req:any,res:any)=>res.json({success:true,savings:await prisma.savingsAccount.findMany({where:{userId:req.userId},orderBy:{createdAt:"desc"}})}));
+app.post("/api/savings",requireAuth,asyncRoute(async(req:any,res:any)=>{const b=z.object({name:z.string().min(2),type:z.enum(["DAILY","TARGET","FIXED","SAFEBOX"]),targetAmount:z.coerce.number().positive().optional()}).parse(req.body);res.status(201).json({success:true,savings:await prisma.savingsAccount.create({data:{userId:req.userId,name:b.name,type:b.type,targetAmount:b.targetAmount}})}));
+app.post("/api/savings/:id/deposit",requireAuth,moneyLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({amount:amount(0),pin:z.string().regex(/^\d{4}$/)}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId},include:{wallet:true}});await pinCheck(u,b.pin);const a=await prisma.savingsAccount.findFirst({where:{id:req.params.id,userId:u.id,active:true}});if(!a||!u.wallet)return res.status(404).end();if(u.wallet.balance.lt(money(b.amount)))return res.status(400).json({success:false,message:"Insufficient wallet balance."});const result=await prisma.$transaction(async tx=>{await tx.wallet.update({where:{userId:u.id},data:{balance:{decrement:money(b.amount)}}});const s=await tx.savingsAccount.update({where:{id:a.id},data:{balance:{increment:money(b.amount)}}});const t=await tx.transaction.create({data:{reference:reference("SAV"),senderId:u.id,type:"SAVINGS_DEPOSIT",status:"SUCCESS",amount:money(b.amount),total:money(b.amount),recipientName:a.name,completedAt:new Date()}});await tx.transactionEntry.create({data:{transactionId:t.id,userId:u.id,type:"DEBIT",amount:money(b.amount)}});return s});res.json({success:true,savings:result})}));
+app.post("/api/savings/:id/withdraw",requireAuth,moneyLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({amount:amount(0),pin:z.string().regex(/^\d{4}$/)}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});await pinCheck(u,b.pin);const a=await prisma.savingsAccount.findFirst({where:{id:req.params.id,userId:u.id,active:true}});if(!a)return res.status(404).end();if(a.balance.lt(money(b.amount)))return res.status(400).json({success:false,message:"Insufficient savings balance."});await prisma.$transaction(async tx=>{await tx.savingsAccount.update({where:{id:a.id},data:{balance:{decrement:money(b.amount)}}});await tx.wallet.update({where:{userId:u.id},data:{balance:{increment:money(b.amount)}}});const t=await tx.transaction.create({data:{reference:reference("SAV"),receiverId:u.id,type:"SAVINGS_WITHDRAWAL",status:"SUCCESS",amount:money(b.amount),total:money(b.amount),recipientName:a.name,completedAt:new Date()}});await tx.transactionEntry.create({data:{transactionId:t.id,userId:u.id,type:"CREDIT",amount:money(b.amount)}})});res.json({success:true})}));
+app.get("/api/cards",requireAuth,asyncRoute(async(req:any,res:any)=>res.json({success:true,cards:await prisma.card.findMany({where:{userId:req.userId},select:{id:true,maskedNumber:true,last4:true,expiryMonth:true,expiryYear:true,status:true,spendingLimit:true,createdAt:true}})}));
+app.post("/api/cards",requireAuth,asyncRoute(async(req:any,res:any)=>{const b=z.object({pin:z.string().regex(/^\d{4}$/)}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});await pinCheck(u,b.pin);const n=crypto.randomInt(4000000000000000,4999999999999999).toString();const cvv=String(crypto.randomInt(100,999));const card=await prisma.card.create({data:{userId:u.id,last4:n.slice(-4),maskedNumber:`**** **** **** ${n.slice(-4)}`,expiryMonth:new Date().getMonth()+1,expiryYear:new Date().getFullYear()+3,cvvHash:await argon2.hash(cvv),pinHash:await argon2.hash(b.pin)}});await audit(u.id,"CARD_CREATED",req,"Card",card.id);res.status(201).json({success:true,card,oneTimeCvv:cvv})}));
+app.post("/api/cards/:id/freeze",requireAuth,asyncRoute(async(req:any,res:any)=>{const c=await prisma.card.findFirst({where:{id:req.params.id,userId:req.userId}});if(!c)return res.status(404).end();const updated=await prisma.card.update({where:{id:c.id},data:{status:c.status==="FROZEN"?"ACTIVE":"FROZEN"}});res.json({success:true,card:updated})}));
+app.get("/api/loans",requireAuth,asyncRoute(async(req:any,res:any)=>res.json({success:true,loans:await prisma.loan.findMany({where:{userId:req.userId},orderBy:{createdAt:"desc"}})}));
+app.post("/api/loans",requireAuth,asyncRoute(async(req:any,res:any)=>{const b=z.object({amount:amount(0),durationMonths:z.coerce.number().int().min(1).max(60)}).parse(req.body);const a=money(b.amount),interest=a.mul("0.1"),total=a.add(interest);const l=await prisma.loan.create({data:{userId:req.userId,amount:a,interest,totalRepayable:total,outstanding:total,durationMonths:b.durationMonths}});await notify(req.userId,"Loan application submitted",`₦${b.amount.toLocaleString()} is awaiting review.`,"LOAN");res.status(201).json({success:true,loan:l})}));
+app.post("/api/loans/:id/repay",requireAuth,moneyLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({amount:amount(0),pin:z.string().regex(/^\d{4}$/)}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId},include:{wallet:true}});await pinCheck(u,b.pin);const l=await prisma.loan.findFirst({where:{id:req.params.id,userId:u.id,status:{in:["APPROVED","ACTIVE"]}}});if(!l||!u.wallet)return res.status(404).end();const pay=money(Math.min(b.amount,Number(l.outstanding)));if(u.wallet.balance.lt(pay))return res.status(400).json({success:false,message:"Insufficient wallet balance."});await prisma.$transaction(async tx=>{await tx.wallet.update({where:{userId:u.id},data:{balance:{decrement:pay}}});await tx.loan.update({where:{id:l.id},data:{outstanding:{decrement:pay},status:Number(l.outstanding)-Number(pay)<=0?"PAID":"ACTIVE"}});const t=await tx.transaction.create({data:{reference:reference("LOAN"),senderId:u.id,type:"LOAN_REPAYMENT",status:"SUCCESS",amount:pay,total:pay,completedAt:new Date()}});await tx.transactionEntry.create({data:{transactionId:t.id,userId:u.id,type:"DEBIT",amount:pay}})});res.json({success:true})}));
+app.get("/api/webauthn/register/options",requireAuth,asyncRoute(async(req:any,res:any)=>{const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId},include:{passkeys:true}});const options=await generateRegistrationOptions({rpName:"Internal Wallet",rpID,userName:u.username,attestationType:"none",excludeCredentials:u.passkeys.map(p=>({id:p.credentialId,transports:(p.transports as any)||undefined})),authenticatorSelection:{residentKey:"preferred",userVerification:"preferred",authenticatorAttachment:"platform"}});await prisma.webAuthnChallenge.create({data:{userId:u.id,kind:"register",challenge:options.challenge,expiresAt:new Date(Date.now()+5*60*1000)}});res.json(options)}));
+app.post("/api/webauthn/register/verify",requireAuth,asyncRoute(async(req:any,res:any)=>{const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});const c=await prisma.webAuthnChallenge.findFirst({where:{userId:u.id,kind:"register",expiresAt:{gt:new Date()}},orderBy:{createdAt:"desc"}});if(!c)return res.status(400).json({success:false,message:"Registration challenge expired."});const v=await verifyRegistrationResponse({response:req.body,expectedChallenge:c.challenge,expectedOrigin:origin,expectedRPID:rpID});if(!v.verified||!v.registrationInfo)return res.status(400).json({success:false,message:"Passkey verification failed."});const info:any=v.registrationInfo;await prisma.passkey.create({data:{userId:u.id,credentialId:info.credential.id,publicKey:Buffer.from(info.credential.publicKey),counter:BigInt(info.credential.counter),transports:info.credential.transports||[]}});await prisma.webAuthnChallenge.delete({where:{id:c.id}});await audit(u.id,"PASSKEY_REGISTERED",req);res.json({success:true})}));
+app.post("/api/webauthn/auth/options",authLimiter,asyncRoute(async(req:any,res:any)=>{const {identifier}=z.object({identifier:z.string()}).parse(req.body);const u=await prisma.user.findFirst({where:{OR:[{email:identifier},{phone:identifier},{username:identifier}]},include:{passkeys:true}});if(!u||!u.passkeys.length)return res.status(404).json({success:false,message:"No passkey registered."});const options=await generateAuthenticationOptions({rpID,allowCredentials:u.passkeys.map(p=>({id:p.credentialId,transports:(p.transports as any)||undefined})),userVerification:"preferred"});await prisma.webAuthnChallenge.create({data:{userId:u.id,kind:"auth",challenge:options.challenge,expiresAt:new Date(Date.now()+5*60*1000)}});res.json(options)}));
+app.post("/api/webauthn/auth/verify",authLimiter,asyncRoute(async(req:any,res:any)=>{const {identifier}=z.object({identifier:z.string()}).parse(req.body);const u=await prisma.user.findFirst({where:{OR:[{email:identifier},{phone:identifier},{username:identifier}]},include:{passkeys:true}});if(!u)return res.status(401).end();const c=await prisma.webAuthnChallenge.findFirst({where:{userId:u.id,kind:"auth",expiresAt:{gt:new Date()}},orderBy:{createdAt:"desc"}});if(!c)return res.status(400).json({success:false,message:"Authentication challenge expired."});const body=req.body.response||req.body;const cred=u.passkeys.find(p=>p.credentialId===body.id);if(!cred)return res.status(401).json({success:false,message:"Unknown passkey."});const v=await verifyAuthenticationResponse({response:body,expectedChallenge:c.challenge,expectedOrigin:origin,expectedRPID:rpID,credential:{id:cred.credentialId,publicKey:new Uint8Array(cred.publicKey),counter:Number(cred.counter),transports:(cred.transports as any)||undefined}});if(!v.verified)return res.status(401).json({success:false,message:"Passkey authentication failed."});await prisma.passkey.update({where:{id:cred.id},data:{counter:BigInt(v.authenticationInfo.newCounter)}});await prisma.webAuthnChallenge.delete({where:{id:c.id}});const access=signAccess(u.id),refresh=signRefresh(u.id);await prisma.session.create({data:{userId:u.id,refreshHash:hashToken(refresh),expiresAt:new Date(Date.now()+7*864e5)}});await audit(u.id,"PASSKEY_LOGIN",req);res.json({success:true,accessToken:access,refreshToken:refresh})}));
+app.get("/api/beneficiaries",requireAuth,asyncRoute(async(req:any,res:any)=>res.json({success:true,beneficiaries:await prisma.beneficiary.findMany({where:{userId:req.userId},orderBy:{createdAt:"desc"}})}));
+app.post("/api/beneficiaries",requireAuth,asyncRoute(async(req:any,res:any)=>{const b=z.object({label:z.string().min(1).max(50),recipientId:z.string().optional(),accountNumber:z.string().optional(),bankCode:z.string().optional()}).parse(req.body);res.status(201).json({success:true,beneficiary:await prisma.beneficiary.create({data:{userId:req.userId,...b}})}));
+app.delete("/api/beneficiaries/:id",requireAuth,asyncRoute(async(req:any,res:any)=>{await prisma.beneficiary.deleteMany({where:{id:req.params.id,userId:req.userId}});res.json({success:true})}));
+app.post("/api/qr/pay",requireAuth,moneyLimiter,asyncRoute(async(req:any,res:any)=>{const b=z.object({username:z.string(),amount:amount(0),pin:z.string().regex(/^\d{4}$/),stepUpToken:z.string().optional()}).parse(req.body);const u=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});const r=await prisma.user.findUnique({where:{username:b.username}});if(!r)return res.status(404).json({success:false,message:"QR recipient not found."});const shield=needsShield(u,b.amount);if(shield.required&&!b.stepUpToken)return res.status(428).json({success:false,code:"STEP_UP_REQUIRED"});await pinCheck(u,b.pin);const tx=await internalTransfer(u.id,r.id,money(b.amount),"QR payment",crypto.randomUUID());res.json({success:true,transaction:tx})}));
+app.get("/api/admin/users",requireAuth,asyncRoute(async(req:any,res:any)=>{const me=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});if(!["ADMIN","SUPER_ADMIN","SUPPORT"].includes(me.role))return res.status(403).json({success:false,message:"Admin role required."});res.json({success:true,users:await prisma.user.findMany({orderBy:{createdAt:"desc"},select:{id:true,firstName:true,lastName:true,username:true,phone:true,email:true,accountNumber:true,status:true,role:true,createdAt:true}})}));
+app.post("/api/admin/users/:id/status",requireAuth,asyncRoute(async(req:any,res:any)=>{const me=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});if(!["ADMIN","SUPER_ADMIN"].includes(me.role))return res.status(403).end();const {status}=z.object({status:z.enum(["ACTIVE","SUSPENDED","LOCKED"])}).parse(req.body);const u=await prisma.user.update({where:{id:req.params.id},data:{status}});await audit(me.id,"USER_STATUS_CHANGED",req,"User",u.id,{status});res.json({success:true,user:u})}));
+app.post("/api/admin/users/:id/role",requireAuth,asyncRoute(async(req:any,res:any)=>{const me=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});if(me.role!=="SUPER_ADMIN")return res.status(403).end();const {role}=z.object({role:z.enum(["USER","SUPPORT","ADMIN","SUPER_ADMIN"])}).parse(req.body);const u=await prisma.user.update({where:{id:req.params.id},data:{role}});await audit(me.id,"USER_ROLE_CHANGED",req,"User",u.id,{role});res.json({success:true,user:u})}));
+app.get("/api/admin/loans",requireAuth,asyncRoute(async(req:any,res:any)=>{const me=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});if(!["ADMIN","SUPER_ADMIN"].includes(me.role))return res.status(403).end();res.json({success:true,loans:await prisma.loan.findMany({where:{status:"PENDING"},include:{user:{select:{username:true,firstName:true,lastName:true,accountNumber:true}}},orderBy:{createdAt:"asc"}})}));
+app.post("/api/admin/loans/:id/decision",requireAuth,asyncRoute(async(req:any,res:any)=>{const me=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});if(!["ADMIN","SUPER_ADMIN"].includes(me.role))return res.status(403).end();const {decision}=z.object({decision:z.enum(["APPROVE","REJECT"])}).parse(req.body);const l=await prisma.loan.findUniqueOrThrow({where:{id:req.params.id}});const updated=await prisma.$transaction(async tx=>{const x=await tx.loan.update({where:{id:l.id},data:decision==="APPROVE"?{status:"ACTIVE",approvedAt:new Date(),dueDate:new Date(Date.now()+l.durationMonths*30*864e5)}:{status:"REJECTED"}});if(decision==="APPROVE"){await tx.wallet.update({where:{userId:l.userId},data:{balance:{increment:l.amount}}});const t=await tx.transaction.create({data:{reference:reference("LOAN"),receiverId:l.userId,type:"LOAN_DISBURSEMENT",status:"SUCCESS",amount:l.amount,total:l.amount,completedAt:new Date()}});await tx.transactionEntry.create({data:{transactionId:t.id,userId:l.userId,type:"CREDIT",amount:l.amount}});await tx.notification.create({data:{userId:l.userId,title:"Loan approved",message:`₦${l.amount} has been credited to your wallet.`,type:"LOAN"}})}return x});await audit(me.id,"LOAN_DECISION",req,"Loan",l.id,{decision});res.json({success:true,loan:updated})}));
+app.get("/api/admin/audit",requireAuth,asyncRoute(async(req:any,res:any)=>{const me=await prisma.user.findUniqueOrThrow({where:{id:req.userId}});if(!["ADMIN","SUPER_ADMIN"].includes(me.role))return res.status(403).end();res.json({success:true,logs:await prisma.auditLog.findMany({orderBy:{createdAt:"desc"},take:300})})}));
+app.use((err:any,_req:any,res:any,_next:any)=>{console.error(err);if(err?.name==="ZodError")return res.status(400).json({success:false,message:"Invalid request data."});res.status(err?.status||500).json({success:false,message:err?.message||"Server error"})});
+app.listen(port,()=>console.log(`wallet backend listening on ${port}`));
