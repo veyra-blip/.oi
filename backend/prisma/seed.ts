@@ -20,7 +20,7 @@ async function main() {
       email: "demo@example.com",
       passwordHash,
       pinHash: pin1,
-      accountNumber: "8100000001"
+      accountNumber: "0100000001"
     }
   });
 
@@ -35,7 +35,7 @@ async function main() {
       email: "receiver@example.com",
       passwordHash,
       pinHash: pin2,
-      accountNumber: "8100000002"
+      accountNumber: "0100000002"
     }
   });
 
@@ -58,7 +58,8 @@ async function main() {
       email: "admin@example.com",
       passwordHash: adminHash,
       pinHash: await argon2.hash("8642"),
-      accountNumber: "8199999999"
+      accountNumber: "0199999999",
+      role: "SUPER_ADMIN"
     }
   });
 
