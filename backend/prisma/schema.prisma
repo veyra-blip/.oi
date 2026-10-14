@@ -1,41 +1,255 @@
-generator client { provider = "prisma-client-js" }
-datasource db { provider = "postgresql" url = env("DATABASE_URL") }
+generator client {
+  provider = "prisma-client-js"
+}
 
-enum UserStatus { ACTIVE SUSPENDED LOCKED }
-enum Role { USER SUPPORT ADMIN SUPER_ADMIN }
-enum TransactionStatus { PENDING PROCESSING SUCCESS FAILED REVERSED CANCELLED }
-enum TransactionType { INTERNAL_TRANSFER BANK_TRANSFER AIRTIME DATA ELECTRICITY TV INTERNET WATER EDUCATION SAVINGS_DEPOSIT SAVINGS_WITHDRAWAL LOAN_DISBURSEMENT LOAN_REPAYMENT CARD }
-enum EntryType { DEBIT CREDIT }
-enum SavingsType { DAILY TARGET FIXED SAFEBOX }
-enum CardStatus { ACTIVE FROZEN BLOCKED }
-enum LoanStatus { PENDING APPROVED ACTIVE PAID OVERDUE REJECTED }
-enum NotificationType { TRANSFER_SENT TRANSFER_RECEIVED PAYMENT SECURITY SAVINGS LOAN CARD SYSTEM }
-enum ChallengeType { PASSWORD_RESET PIN_CHANGE PASSWORD_CHANGE STEP_UP }
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  LOCKED
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+  CANCELLED
+}
+
+enum TransactionType {
+  INTERNAL_TRANSFER
+  BANK_TRANSFER
+  AIRTIME
+  DATA
+  ELECTRICITY
+  TV
+  INTERNET
+  WATER
+  EDUCATION
+  SAVINGS_DEPOSIT
+  SAVINGS_WITHDRAWAL
+  LOAN_DISBURSEMENT
+  LOAN_REPAYMENT
+  CARD
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+enum SavingsType {
+  DAILY
+  TARGET
+  FIXED
+  SAFEBOX
+}
+
+enum CardStatus {
+  ACTIVE
+  FROZEN
+  BLOCKED
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  ACTIVE
+  PAID
+  OVERDUE
+  REJECTED
+}
+
+enum NotificationType {
+  TRANSFER_SENT
+  TRANSFER_RECEIVED
+  PAYMENT
+  SECURITY
+  SAVINGS
+  LOAN
+  CARD
+  SYSTEM
+}
 
 model User {
- id String @id @default(cuid()); firstName String; lastName String; username String @unique; phone String @unique; email String @unique
- passwordHash String; pinHash String; accountNumber String @unique; status UserStatus @default(ACTIVE); role Role @default(USER)
- pinFailures Int @default(0); pinLockedUntil DateTime?; nightGuard Boolean @default(true); largeShield Boolean @default(true)
- createdAt DateTime @default(now()); updatedAt DateTime @updatedAt
- wallet Wallet?; sentTransactions Transaction[] @relation("sender"); receivedTransactions Transaction[] @relation("receiver"); notifications Notification[]; sessions Session[]; securityEvents SecurityEvent[]; savings SavingsAccount[]; cards Card[]; loans Loan[]; beneficiaries Beneficiary[]; passkeys Passkey[]; otpChallenges OtpChallenge[]; auditLogs AuditLog[]
+  id              String           @id @default(cuid())
+  firstName       String
+  lastName        String
+  username        String           @unique
+  phone           String           @unique
+  email           String           @unique
+  passwordHash    String
+  pinHash         String
+  accountNumber   String           @unique
+  status          UserStatus       @default(ACTIVE)
+  pinFailures     Int              @default(0)
+  pinLockedUntil  DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  wallet          Wallet?
+  sentTransactions Transaction[]   @relation("sender")
+  receivedTransactions Transaction[] @relation("receiver")
+  notifications   Notification[]
+  sessions        Session[]
+  securityEvents  SecurityEvent[]
+  savings         SavingsAccount[]
+  cards           Card[]
+  loans           Loan[]
 }
-model Wallet { id String @id @default(cuid()); userId String @unique; balance Decimal @default(500000000) @db.Decimal(18,2); currency String @default("NGN"); status String @default("ACTIVE"); createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; user User @relation(fields:[userId],references:[id],onDelete: Cascade) }
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Decimal  @default(500000000.00) @db.Decimal(18,2)
+  currency  String   @default("NGN")
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 model Transaction {
- id String @id @default(cuid()); reference String @unique; senderId String?; receiverId String?; type TransactionType; status TransactionStatus @default(PENDING); amount Decimal @db.Decimal(18,2); fee Decimal @default(0) @db.Decimal(18,2); vat Decimal @default(0) @db.Decimal(18,2); total Decimal @db.Decimal(18,2); narration String?; recipientName String?; recipientAccount String?; recipientBank String?; metadata Json?; createdAt DateTime @default(now()); completedAt DateTime?; failureReason String?
- sender User? @relation("sender",fields:[senderId],references:[id]); receiver User? @relation("receiver",fields:[receiverId],references:[id]); entries TransactionEntry[]; idempotency IdempotencyKey?; @@index([senderId,createdAt]); @@index([receiverId,createdAt]); @@index([reference])
+  id              String            @id @default(cuid())
+  reference       String            @unique
+  senderId        String?
+  receiverId      String?
+  type            TransactionType
+  status          TransactionStatus @default(PENDING)
+  amount          Decimal           @db.Decimal(18,2)
+  fee             Decimal           @default(0) @db.Decimal(18,2)
+  vat             Decimal           @default(0) @db.Decimal(18,2)
+  total           Decimal           @db.Decimal(18,2)
+  narration       String?
+  recipientName   String?
+  recipientAccount String?
+  recipientBank   String?
+  metadata        Json?
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
+  failureReason   String?
+  sender          User?             @relation("sender", fields: [senderId], references: [id])
+  receiver        User?             @relation("receiver", fields: [receiverId], references: [id])
+  entries         TransactionEntry[]
+  idempotency     IdempotencyKey?
+  @@index([senderId, createdAt])
+  @@index([receiverId, createdAt])
+  @@index([reference])
 }
-model TransactionEntry { id String @id @default(cuid()); transactionId String; userId String; type EntryType; amount Decimal @db.Decimal(18,2); createdAt DateTime @default(now()); transaction Transaction @relation(fields:[transactionId],references:[id],onDelete: Cascade); @@index([userId,createdAt]) }
-model IdempotencyKey { id String @id @default(cuid()); key String @unique; userId String; transactionId String @unique; transaction Transaction @relation(fields:[transactionId],references:[id],onDelete: Cascade); createdAt DateTime @default(now()) }
-model Notification { id String @id @default(cuid()); userId String; type NotificationType @default(SYSTEM); title String; message String; read Boolean @default(false); createdAt DateTime @default(now()); user User @relation(fields:[userId],references:[id],onDelete: Cascade); @@index([userId,createdAt]) }
-model Session { id String @id @default(cuid()); userId String; refreshHash String @unique; expiresAt DateTime; createdAt DateTime @default(now()); user User @relation(fields:[userId],references:[id],onDelete: Cascade); @@index([userId]) }
-model SecurityEvent { id String @id @default(cuid()); userId String?; event String; ip String?; metadata Json?; createdAt DateTime @default(now()); user User? @relation(fields:[userId],references:[id],onDelete:SetNull); @@index([userId,createdAt]) }
-model AuditLog { id String @id @default(cuid()); actorId String?; action String; targetType String?; targetId String?; ip String?; metadata Json?; createdAt DateTime @default(now()); actor User? @relation(fields:[actorId],references:[id],onDelete:SetNull); @@index([actorId,createdAt]); @@index([action,createdAt]) }
-model OtpChallenge { id String @id @default(cuid()); userId String?; type ChallengeType; codeHash String; expiresAt DateTime; attempts Int @default(0); usedAt DateTime?; createdAt DateTime @default(now()); user User? @relation(fields:[userId],references:[id],onDelete:Cascade); @@index([userId,type,createdAt]) }
-model Passkey { id String @id @default(cuid()); userId String; credentialId String @unique; publicKey Bytes; counter BigInt @default(0); transports Json?; createdAt DateTime @default(now()); user User @relation(fields:[userId],references:[id],onDelete:Cascade); @@index([userId]) }
-model WebAuthnChallenge { id String @id @default(cuid()); userId String; kind String; challenge String; expiresAt DateTime; createdAt DateTime @default(now()); @@index([userId,kind]) }
-model Bank { id String @id @default(cuid()); name String @unique; code String @unique; accounts BankAccount[] }
-model BankAccount { id String @id @default(cuid()); bankId String; accountNumber String @unique; accountName String; balance Decimal @default(1000000) @db.Decimal(18,2); active Boolean @default(true); bank Bank @relation(fields:[bankId],references:[id],onDelete:Cascade) }
-model SavingsAccount { id String @id @default(cuid()); userId String; name String; type SavingsType; balance Decimal @default(0) @db.Decimal(18,2); targetAmount Decimal? @db.Decimal(18,2); maturityDate DateTime?; interestRate Decimal @default(0) @db.Decimal(8,4); active Boolean @default(true); createdAt DateTime @default(now()); user User @relation(fields:[userId],references:[id],onDelete:Cascade); @@index([userId]) }
-model Card { id String @id @default(cuid()); userId String; last4 String; maskedNumber String; expiryMonth Int; expiryYear Int; cvvHash String; pinHash String; status CardStatus @default(ACTIVE); spendingLimit Decimal @default(500000) @db.Decimal(18,2); createdAt DateTime @default(now()); user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model Loan { id String @id @default(cuid()); userId String; amount Decimal @db.Decimal(18,2); interest Decimal @db.Decimal(18,2); totalRepayable Decimal @db.Decimal(18,2); outstanding Decimal @db.Decimal(18,2); durationMonths Int; status LoanStatus @default(PENDING); approvedAt DateTime?; dueDate DateTime?; createdAt DateTime @default(now()); user User @relation(fields:[userId],references:[id],onDelete:Cascade); @@index([userId,status]) }
-model Beneficiary { id String @id @default(cuid()); userId String; label String; recipientId String?; accountNumber String?; bankCode String?; createdAt DateTime @default(now()); user User @relation(fields:[userId],references:[id],onDelete:Cascade); @@index([userId]) }
+
+model TransactionEntry {
+  id            String      @id @default(cuid())
+  transactionId String
+  userId        String
+  type          EntryType
+  amount        Decimal     @db.Decimal(18,2)
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+  createdAt     DateTime    @default(now())
+}
+
+model IdempotencyKey {
+  id            String       @id @default(cuid())
+  key           String       @unique
+  userId        String
+  transactionId String       @unique
+  transaction   Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  createdAt     DateTime     @default(now())
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType @default(SYSTEM)
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshHash  String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model SecurityEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  event     String
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([userId, createdAt])
+}
+
+model Bank {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  code      String        @unique
+  accounts  BankAccount[]
+}
+
+model BankAccount {
+  id            String @id @default(cuid())
+  bankId        String
+  accountNumber String @unique
+  accountName   String
+  balance       Decimal @default(1000000) @db.Decimal(18,2)
+  active        Boolean @default(true)
+  bank          Bank   @relation(fields: [bankId], references: [id], onDelete: Cascade)
+}
+
+model SavingsAccount {
+  id            String      @id @default(cuid())
+  userId        String
+  name          String
+  type          SavingsType
+  balance       Decimal     @default(0) @db.Decimal(18,2)
+  targetAmount  Decimal?    @db.Decimal(18,2)
+  maturityDate  DateTime?
+  interestRate  Decimal     @default(0) @db.Decimal(8,4)
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model Card {
+  id           String     @id @default(cuid())
+  userId       String
+  last4        String
+  maskedNumber String
+  expiryMonth  Int
+  expiryYear   Int
+  cvvHash      String
+  pinHash      String
+  status       CardStatus @default(ACTIVE)
+  spendingLimit Decimal   @default(500000) @db.Decimal(18,2)
+  createdAt    DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Loan {
+  id            String     @id @default(cuid())
+  userId        String
+  amount        Decimal    @db.Decimal(18,2)
+  interest      Decimal    @db.Decimal(18,2)
+  totalRepayable Decimal   @db.Decimal(18,2)
+  durationMonths Int
+  status        LoanStatus @default(PENDING)
+  createdAt     DateTime   @default(now())
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
