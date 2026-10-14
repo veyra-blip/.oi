@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: wallet
+      POSTGRES_DB: internal_wallet
+    ports: ["5432:5432"]
+    volumes: ["wallet_pg:/var/lib/postgresql/data"]
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://wallet:wallet@db:5432/internal_wallet?schema=public
+      JWT_SECRET: change-me
+      REFRESH_SECRET: change-me-too
+      FRONTEND_ORIGIN: http://localhost:5173
+      WEBAUTHN_RP_ID: localhost
+      WEBAUTHN_ORIGIN: http://localhost:5173
+      LARGE_TX_THRESHOLD: 5000000
+    depends_on: [db]
+    ports: ["4000:4000"]
+volumes:
+  wallet_pg:
