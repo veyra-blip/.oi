@@ -10,6 +10,7 @@ import { asyncRoute, requireAuth } from "./middleware.js";
 import { hashToken, signAccess, signRefresh, verifyRefresh } from "./auth.js";
 import { internalTransfer } from "./transactionService.js";
 import { idempotencyKey, reference } from "./utils.js";
+import { sendTermiiSms } from "./sms.js";
 import { Prisma } from "@prisma/client";
 
 const app = express();
@@ -17,30 +18,13 @@ app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 4000);
 
 app.use(helmet());
-const allowedOrigins = new Set([
-  "https://veyra-blip.github.io",
-  "http://localhost:5173",
-  "http://localhost:4000",
-  ...(process.env.FRONTEND_ORIGIN
-    ? process.env.FRONTEND_ORIGIN.split(",").map(x => x.trim()).filter(Boolean)
-    : [])
-]);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
-    return callback(new Error("CORS_ORIGIN_NOT_ALLOWED"));
-  },
-  credentials: true
-}));
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173" }));
 app.use(express.json({ limit: "100kb" }));
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 50 });
 const moneyLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30 });
 
 app.get("/api/health", (_req, res) => res.json({ success: true, service: "internal-wallet" }));
-app.get("/health", (_req, res) => res.json({ success: true, service: "internal-wallet" }));
-app.get("/", (_req, res) => res.json({ success: true, service: "Veyra API", status: "online" }));
 
 app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any) => {
   const body = z.object({
@@ -253,39 +237,13 @@ app.get("/api/banks", requireAuth, asyncRoute(async (_req: any, res: any) => {
   res.json({ success: true, banks: await prisma.bank.findMany({ orderBy: { name: "asc" } }) });
 }));
 
-// ============================================================
-// PAYSTACK BANK DIRECTORY + ACCOUNT NAME RESOLUTION
-// ============================================================
-// PAYSTACK_SECRET_KEY is read only from Render environment variables.
-// Never put the secret key in this source file or frontend code.
-
-type PaystackBank = {
-  id?: number;
-  name: string;
-  code: string;
-  active: boolean;
-  country: string;
-  currency: string;
-  type: string;
-};
-
-let paystackBanksCache: {
-  expiresAt: number;
-  banks: PaystackBank[];
-} = {
-  expiresAt: 0,
-  banks: []
-};
+// Paystack bank directory and live account-name resolution.
+// The Paystack secret key MUST remain on the backend.
+let paystackBanksCache: { expiresAt: number; banks: any[] } = { expiresAt: 0, banks: [] };
 
 async function paystackRequest(path: string, init: RequestInit = {}) {
   const secret = process.env.PAYSTACK_SECRET_KEY;
-
-  if (!secret) {
-    const error: any = new Error("PAYSTACK_NOT_CONFIGURED");
-    error.httpStatus = 503;
-    throw error;
-  }
-
+  if (!secret) throw new Error("PAYSTACK_NOT_CONFIGURED");
   const response = await fetch(`https://api.paystack.co${path}`, {
     ...init,
     headers: {
@@ -294,130 +252,35 @@ async function paystackRequest(path: string, init: RequestInit = {}) {
       ...(init.headers || {})
     }
   });
-
   let data: any = {};
-  try {
-    data = await response.json();
-  } catch {
-    data = {};
-  }
-
+  try { data = await response.json(); } catch {}
   if (!response.ok || data.status === false) {
-    const error: any = new Error(
-      data.message || "Paystack request failed."
-    );
-    error.httpStatus = response.status;
-    error.paystackResponse = data;
-    throw error;
+    const err: any = new Error(data.message || "Paystack request failed.");
+    err.httpStatus = response.status;
+    throw err;
   }
-
   return data;
 }
 
 app.get("/api/paystack/banks", requireAuth, asyncRoute(async (_req: any, res: any) => {
-  if (
-    Date.now() < paystackBanksCache.expiresAt &&
-    paystackBanksCache.banks.length > 0
-  ) {
-    return res.json({
-      success: true,
-      banks: paystackBanksCache.banks,
-      source: "paystack-cache",
-      count: paystackBanksCache.banks.length
-    });
+  if (Date.now() < paystackBanksCache.expiresAt && paystackBanksCache.banks.length) {
+    return res.json({ success: true, banks: paystackBanksCache.banks, source: "paystack-cache" });
   }
-
-  try {
-    const allBanks: PaystackBank[] = [];
-
-    for (let page = 1; page <= 5; page++) {
-      const data = await paystackRequest(
-        `/bank?country=nigeria&perPage=100&page=${page}`
-      );
-
-      if (!Array.isArray(data.data)) {
-        const error: any = new Error("PAYSTACK_INVALID_BANK_RESPONSE");
-        error.httpStatus = 502;
-        error.paystackResponse = data;
-        throw error;
-      }
-
-      const pageBanks: PaystackBank[] = data.data
-        .filter((bank: any) =>
-          bank && bank.code && bank.name && bank.active !== false
-        )
-        .map((bank: any) => ({
-          id: bank.id,
-          name: String(bank.name).trim(),
-          code: String(bank.code).trim(),
-          active: bank.active !== false,
-          country: String(bank.country || "Nigeria"),
-          currency: String(bank.currency || "NGN"),
-          type: String(bank.type || "nuban")
-        }));
-
-      allBanks.push(...pageBanks);
-
-      if (data.data.length < 100) break;
-    }
-
-    const uniqueBanks = Array.from(
-      new Map(allBanks.map(bank => [bank.code, bank])).values()
-    );
-
-    uniqueBanks.sort((a, b) => a.name.localeCompare(b.name));
-
-    if (uniqueBanks.length === 0) {
-      return res.status(502).json({
-        success: false,
-        code: "PAYSTACK_NO_BANKS",
-        message: "Paystack returned no supported Nigerian banks."
-      });
-    }
-
-    paystackBanksCache = {
-      expiresAt: Date.now() + 6 * 60 * 60 * 1000,
-      banks: uniqueBanks
-    };
-
-    return res.json({
-      success: true,
-      banks: uniqueBanks,
-      source: "paystack",
-      count: uniqueBanks.length
-    });
-  } catch (error: any) {
-    console.error(
-      "Paystack bank directory error:",
-      error?.message || error
-    );
-
-    if (error?.message === "PAYSTACK_NOT_CONFIGURED") {
-      return res.status(503).json({
-        success: false,
-        code: "PAYSTACK_NOT_CONFIGURED",
-        message: "Paystack is not configured on the Veyra backend."
-      });
-    }
-
-    if (error?.message === "PAYSTACK_INVALID_BANK_RESPONSE") {
-      return res.status(502).json({
-        success: false,
-        code: "PAYSTACK_INVALID_BANK_RESPONSE",
-        message: "Paystack returned an unexpected bank-directory response."
-      });
-    }
-
-    return res.status(
-      error?.httpStatus >= 400 && error?.httpStatus < 600
-        ? error.httpStatus
-        : 502
-    ).json({
-      success: false,
-      code: "PAYSTACK_BANKS_FAILED",
-      message: error?.message || "Could not load the Paystack bank directory."
-    });
-  }
+  const data = await paystackRequest("/bank?country=nigeria&perPage=100");
+  const banks = (data.data || [])
+    .filter((b: any) => b.active !== false && b.code && b.name)
+    .map((b: any) => ({
+      id: b.id,
+      name: b.name,
+      code: String(b.code),
+      active: b.active !== false,
+      country: b.country || "Nigeria",
+      currency: b.currency || "NGN",
+      type: b.type || "nuban"
+    }))
+    .sort((a: any, b: any) => a.name.localeCompare(b.name));
+  paystackBanksCache = { expiresAt: Date.now() + 6 * 60 * 60 * 1000, banks };
+  res.json({ success: true, banks, source: "paystack" });
 }));
 
 app.get("/api/paystack/resolve", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
@@ -430,21 +293,12 @@ app.get("/api/paystack/resolve", requireAuth, moneyLimiter, asyncRoute(async (re
   });
 
   try {
-    const data = await paystackRequest(
-      `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`
-    );
-
-    const account = data?.data;
-
+    const data = await paystackRequest(`/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`);
+    const account = data.data;
     if (!account?.account_name) {
-      return res.status(404).json({
-        success: false,
-        code: "ACCOUNT_NOT_RESOLVED",
-        message: "Could not resolve the account name."
-      });
+      return res.status(404).json({ success: false, code: "ACCOUNT_NOT_RESOLVED", message: "Could not resolve the account name." });
     }
-
-    return res.json({
+    res.json({
       success: true,
       account: {
         accountNumber: String(account.account_number || accountNumber),
@@ -454,25 +308,12 @@ app.get("/api/paystack/resolve", requireAuth, moneyLimiter, asyncRoute(async (re
       },
       source: "paystack"
     });
-  } catch (error: any) {
-    console.error(
-      "Paystack account resolution error:",
-      error?.message || error
-    );
-
-    if (error?.message === "PAYSTACK_NOT_CONFIGURED") {
-      return res.status(503).json({
-        success: false,
-        code: "PAYSTACK_NOT_CONFIGURED",
-        message: "Paystack account verification is not configured on the Veyra backend."
-      });
+  } catch (e: any) {
+    const message = String(e?.message || "Could not resolve account.");
+    if (message === "PAYSTACK_NOT_CONFIGURED") {
+      return res.status(503).json({ success: false, code: message, message: "Paystack account verification is not configured on the Veyra backend." });
     }
-
-    return res.status(404).json({
-      success: false,
-      code: "ACCOUNT_NOT_RESOLVED",
-      message: "Could not resolve account name. Check the bank and account number."
-    });
+    return res.status(404).json({ success: false, code: "ACCOUNT_NOT_RESOLVED", message: "Could not resolve account name. Check the bank and account number." });
   }
 }));
 
@@ -493,6 +334,9 @@ app.post("/api/transfers/external/simulate", requireAuth, moneyLimiter, asyncRou
     bankCode: z.string().min(2).max(20),
     bankName: z.string().min(2).max(120),
     accountName: z.string().min(2).max(120),
+    // Optional recipient phone for a clearly labelled simulated SMS only.
+    // Account-name resolution does not provide this number automatically.
+    recipientPhone: z.string().regex(/^(?:0\d{10}|234\d{10}|\+234\d{10})$/).optional(),
     amount: z.coerce.number().positive().max(50000000),
     narration: z.string().max(140).optional(),
     pin: z.string().regex(/^\d{4}$/)
@@ -560,6 +404,32 @@ app.post("/api/transfers/external/simulate", requireAuth, moneyLimiter, asyncRou
     });
     return completed;
   });
+
+  // Send SMS only after the simulated transaction commits. SMS errors never
+  // reverse the wallet transaction or change the successful API response.
+  try {
+    const senderAfter = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: { wallet: true }
+    });
+    if (senderAfter?.wallet) {
+      const senderName = `${senderAfter.firstName} ${senderAfter.lastName}`;
+      const senderMessage = `VEYRA SIMULATION: Your simulated transfer of ₦${amount.toFixed(2)} to ${body.accountName} at ${body.bankName} (account ending ${body.accountNumber.slice(-4)}) succeeded. Ref: ${transaction.reference}. Available Veyra balance: ₦${senderAfter.wallet.balance.toFixed(2)}. No real bank transfer occurred.`;
+      const smsJobs: Promise<any>[] = [sendTermiiSms(senderAfter.phone, senderMessage)];
+
+      if (body.recipientPhone) {
+        const recipientMessage = `VEYRA SIMULATION: A simulated transfer of ₦${amount.toFixed(2)} was initiated for ${body.accountName} at ${body.bankName}, account ending ${body.accountNumber.slice(-4)}. Ref: ${transaction.reference}. No real funds were credited. This message is not a bank credit alert.`;
+        smsJobs.push(sendTermiiSms(body.recipientPhone, recipientMessage));
+      }
+
+      const smsResults = await Promise.allSettled(smsJobs);
+      if (smsResults.some(item => item.status === "rejected" || (item.status === "fulfilled" && !item.value.ok))) {
+        console.warn("One or more external simulated-transfer SMS notifications could not be sent.");
+      }
+    }
+  } catch (error: any) {
+    console.warn("External simulated-transfer SMS preparation failed:", error?.name || "unknown error");
+  }
 
   res.json({
     success: true,

@@ -1,6 +1,7 @@
 import { Prisma, TransactionStatus, TransactionType, NotificationType } from "@prisma/client";
 import { prisma } from "./db.js";
 import { reference } from "./utils.js";
+import { sendTermiiSms } from "./sms.js";
 
 export async function internalTransfer(
   senderId: string,
@@ -13,12 +14,12 @@ export async function internalTransfer(
   if (amount.lte(0)) throw new Error("INVALID_AMOUNT");
   if (senderId === recipientId) throw new Error("SELF_TRANSFER");
 
-  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const existing = await tx.idempotencyKey.findUnique({
       where: { key },
       include: { transaction: true }
     });
-    if (existing) return existing.transaction;
+    if (existing) return { transaction: existing.transaction, created: false };
 
     const sender = await tx.user.findUnique({
       where: { id: senderId },
@@ -94,6 +95,43 @@ export async function internalTransfer(
       data: { key, userId: senderId, transactionId: completed.id }
     });
 
-    return completed;
+    return { transaction: completed, created: true };
   });
+
+  // Send SMS only for a newly committed transfer. An idempotent retry returns
+  // the existing transaction without sending duplicate SMS messages.
+  if (result.created) {
+    try {
+      const [senderAfter, receiverAfter] = await Promise.all([
+        prisma.user.findUnique({ where: { id: senderId }, include: { wallet: true } }),
+        prisma.user.findUnique({ where: { id: recipientId }, include: { wallet: true } })
+      ]);
+
+      if (senderAfter?.wallet && receiverAfter?.wallet) {
+        const amountText = `₦${amount.toFixed(2)}`;
+        const senderName = `${senderAfter.firstName} ${senderAfter.lastName}`;
+        const receiverName = `${receiverAfter.firstName} ${receiverAfter.lastName}`;
+        const senderLast4 = senderAfter.accountNumber.slice(-4);
+        const receiverLast4 = receiverAfter.accountNumber.slice(-4);
+        const senderBalance = `₦${senderAfter.wallet.balance.toFixed(2)}`;
+        const receiverBalance = `₦${receiverAfter.wallet.balance.toFixed(2)}`;
+
+        const senderMessage = `VEYRA SIMULATION: Your simulated transfer of ${amountText} to ${receiverName} (Veyra account ending ${receiverLast4}) succeeded. Ref: ${result.transaction.reference}. Available Veyra balance: ${senderBalance}. No real bank transfer occurred.`;
+        const receiverMessage = `VEYRA SIMULATION: ${amountText} was added to your simulated Veyra wallet from ${senderName} (Veyra account ending ${senderLast4}). Ref: ${result.transaction.reference}. Available Veyra balance: ${receiverBalance}. This is not a real bank credit.`;
+
+        const smsResults = await Promise.allSettled([
+          sendTermiiSms(senderAfter.phone, senderMessage),
+          sendTermiiSms(receiverAfter.phone, receiverMessage)
+        ]);
+        if (smsResults.some(item => item.status === "rejected" || (item.status === "fulfilled" && !item.value.ok))) {
+          console.warn("One or more Veyra transfer SMS notifications could not be sent.");
+        }
+      }
+    } catch (error: any) {
+      // The wallet transfer is already committed; SMS problems must not undo it.
+      console.warn("Veyra transfer SMS preparation failed:", error?.name || "unknown error");
+    }
+  }
+
+  return result.transaction;
 }
