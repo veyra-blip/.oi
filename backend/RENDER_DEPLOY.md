@@ -86,3 +86,24 @@ The backend now exposes:
 Set `PAYSTACK_SECRET_KEY` in Render Environment Variables. Do not place the secret key in the HTML or commit it to GitHub. Paystack's Resolve Account Number endpoint requires the account number and bank code and returns the resolved account name.
 
 The supplied `sk_test_...` key is for Paystack test mode. Paystack test and live environments are separate, so live account verification requires the live secret key when the integration is ready for production.
+
+
+## Termii SMS notifications
+
+Set these in Render → the Veyra backend service → Environment. Do not commit live credentials to GitHub:
+
+- `TERMII_API_KEY`: your Termii live API key
+- `TERMII_BASE_URL`: `https://v4.api.termii.com` (your account-specific Termii Base URL)
+- `TERMII_SENDER_ID`: an approved Termii sender ID for your account, such as `VEYRA` only if approved
+- `TERMII_CHANNEL`: optional; defaults to `dnd` in this integration. Confirm the available route and charges in your Termii account; DND routing does not guarantee delivery.
+
+SMS messages are sent after a simulated wallet transfer commits and clearly say that no real bank credit occurred. Internal Veyra transfers send to the sender and recipient phone numbers saved in their Veyra profiles. External simulated transfers send to the sender; an optional `recipientPhone` in the external simulation request can receive a separately labelled simulation SMS. Paystack account-name resolution does not return the recipient's phone number. SMS failures do not reverse a completed simulated transfer.
+
+
+### Termii endpoint construction
+
+The backend accepts either a Termii root Base URL or one that already ends in `/api`. With the configured value `https://v4.api.termii.com`, the backend sends SMS requests to:
+
+`https://v4.api.termii.com/api/sms/send`
+
+The API key is never stored in the source code or frontend. Put the live value in Render as `TERMII_API_KEY`. Termii documents that account-specific Base URLs are supplied from the dashboard and that API keys are used for authentication.
