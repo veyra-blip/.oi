@@ -21,8 +21,11 @@ const allowedOrigins = new Set([
   "https://veyra-blip.github.io",
   "http://localhost:5173",
   "http://localhost:4000",
-  ...(process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map(x => x.trim()).filter(Boolean) : [])
+  ...(process.env.FRONTEND_ORIGIN
+    ? process.env.FRONTEND_ORIGIN.split(",").map(x => x.trim()).filter(Boolean)
+    : [])
 ]);
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.has(origin)) return callback(null, true);
@@ -250,13 +253,39 @@ app.get("/api/banks", requireAuth, asyncRoute(async (_req: any, res: any) => {
   res.json({ success: true, banks: await prisma.bank.findMany({ orderBy: { name: "asc" } }) });
 }));
 
-// Paystack bank directory and live account-name resolution.
-// The Paystack secret key MUST remain on the backend.
-let paystackBanksCache: { expiresAt: number; banks: any[] } = { expiresAt: 0, banks: [] };
+// ============================================================
+// PAYSTACK BANK DIRECTORY + ACCOUNT NAME RESOLUTION
+// ============================================================
+// PAYSTACK_SECRET_KEY is read only from Render environment variables.
+// Never put the secret key in this source file or frontend code.
+
+type PaystackBank = {
+  id?: number;
+  name: string;
+  code: string;
+  active: boolean;
+  country: string;
+  currency: string;
+  type: string;
+};
+
+let paystackBanksCache: {
+  expiresAt: number;
+  banks: PaystackBank[];
+} = {
+  expiresAt: 0,
+  banks: []
+};
 
 async function paystackRequest(path: string, init: RequestInit = {}) {
   const secret = process.env.PAYSTACK_SECRET_KEY;
-  if (!secret) throw new Error("PAYSTACK_NOT_CONFIGURED");
+
+  if (!secret) {
+    const error: any = new Error("PAYSTACK_NOT_CONFIGURED");
+    error.httpStatus = 503;
+    throw error;
+  }
+
   const response = await fetch(`https://api.paystack.co${path}`, {
     ...init,
     headers: {
@@ -265,35 +294,130 @@ async function paystackRequest(path: string, init: RequestInit = {}) {
       ...(init.headers || {})
     }
   });
+
   let data: any = {};
-  try { data = await response.json(); } catch {}
-  if (!response.ok || data.status === false) {
-    const err: any = new Error(data.message || "Paystack request failed.");
-    err.httpStatus = response.status;
-    throw err;
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
   }
+
+  if (!response.ok || data.status === false) {
+    const error: any = new Error(
+      data.message || "Paystack request failed."
+    );
+    error.httpStatus = response.status;
+    error.paystackResponse = data;
+    throw error;
+  }
+
   return data;
 }
 
 app.get("/api/paystack/banks", requireAuth, asyncRoute(async (_req: any, res: any) => {
-  if (Date.now() < paystackBanksCache.expiresAt && paystackBanksCache.banks.length) {
-    return res.json({ success: true, banks: paystackBanksCache.banks, source: "paystack-cache" });
+  if (
+    Date.now() < paystackBanksCache.expiresAt &&
+    paystackBanksCache.banks.length > 0
+  ) {
+    return res.json({
+      success: true,
+      banks: paystackBanksCache.banks,
+      source: "paystack-cache",
+      count: paystackBanksCache.banks.length
+    });
   }
-  const data = await paystackRequest("/bank?country=nigeria&perPage=100");
-  const banks = (data.data || [])
-    .filter((b: any) => b.active !== false && b.code && b.name)
-    .map((b: any) => ({
-      id: b.id,
-      name: b.name,
-      code: String(b.code),
-      active: b.active !== false,
-      country: b.country || "Nigeria",
-      currency: b.currency || "NGN",
-      type: b.type || "nuban"
-    }))
-    .sort((a: any, b: any) => a.name.localeCompare(b.name));
-  paystackBanksCache = { expiresAt: Date.now() + 6 * 60 * 60 * 1000, banks };
-  res.json({ success: true, banks, source: "paystack" });
+
+  try {
+    const allBanks: PaystackBank[] = [];
+
+    for (let page = 1; page <= 5; page++) {
+      const data = await paystackRequest(
+        `/bank?country=nigeria&perPage=100&page=${page}`
+      );
+
+      if (!Array.isArray(data.data)) {
+        const error: any = new Error("PAYSTACK_INVALID_BANK_RESPONSE");
+        error.httpStatus = 502;
+        error.paystackResponse = data;
+        throw error;
+      }
+
+      const pageBanks: PaystackBank[] = data.data
+        .filter((bank: any) =>
+          bank && bank.code && bank.name && bank.active !== false
+        )
+        .map((bank: any) => ({
+          id: bank.id,
+          name: String(bank.name).trim(),
+          code: String(bank.code).trim(),
+          active: bank.active !== false,
+          country: String(bank.country || "Nigeria"),
+          currency: String(bank.currency || "NGN"),
+          type: String(bank.type || "nuban")
+        }));
+
+      allBanks.push(...pageBanks);
+
+      if (data.data.length < 100) break;
+    }
+
+    const uniqueBanks = Array.from(
+      new Map(allBanks.map(bank => [bank.code, bank])).values()
+    );
+
+    uniqueBanks.sort((a, b) => a.name.localeCompare(b.name));
+
+    if (uniqueBanks.length === 0) {
+      return res.status(502).json({
+        success: false,
+        code: "PAYSTACK_NO_BANKS",
+        message: "Paystack returned no supported Nigerian banks."
+      });
+    }
+
+    paystackBanksCache = {
+      expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+      banks: uniqueBanks
+    };
+
+    return res.json({
+      success: true,
+      banks: uniqueBanks,
+      source: "paystack",
+      count: uniqueBanks.length
+    });
+  } catch (error: any) {
+    console.error(
+      "Paystack bank directory error:",
+      error?.message || error
+    );
+
+    if (error?.message === "PAYSTACK_NOT_CONFIGURED") {
+      return res.status(503).json({
+        success: false,
+        code: "PAYSTACK_NOT_CONFIGURED",
+        message: "Paystack is not configured on the Veyra backend."
+      });
+    }
+
+    if (error?.message === "PAYSTACK_INVALID_BANK_RESPONSE") {
+      return res.status(502).json({
+        success: false,
+        code: "PAYSTACK_INVALID_BANK_RESPONSE",
+        message: "Paystack returned an unexpected bank-directory response."
+      });
+    }
+
+    return res.status(
+      error?.httpStatus >= 400 && error?.httpStatus < 600
+        ? error.httpStatus
+        : 502
+    ).json({
+      success: false,
+      code: "PAYSTACK_BANKS_FAILED",
+      message: error?.message || "Could not load the Paystack bank directory."
+    });
+  }
 }));
 
 app.get("/api/paystack/resolve", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
@@ -306,12 +430,21 @@ app.get("/api/paystack/resolve", requireAuth, moneyLimiter, asyncRoute(async (re
   });
 
   try {
-    const data = await paystackRequest(`/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`);
-    const account = data.data;
+    const data = await paystackRequest(
+      `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`
+    );
+
+    const account = data?.data;
+
     if (!account?.account_name) {
-      return res.status(404).json({ success: false, code: "ACCOUNT_NOT_RESOLVED", message: "Could not resolve the account name." });
+      return res.status(404).json({
+        success: false,
+        code: "ACCOUNT_NOT_RESOLVED",
+        message: "Could not resolve the account name."
+      });
     }
-    res.json({
+
+    return res.json({
       success: true,
       account: {
         accountNumber: String(account.account_number || accountNumber),
@@ -321,12 +454,25 @@ app.get("/api/paystack/resolve", requireAuth, moneyLimiter, asyncRoute(async (re
       },
       source: "paystack"
     });
-  } catch (e: any) {
-    const message = String(e?.message || "Could not resolve account.");
-    if (message === "PAYSTACK_NOT_CONFIGURED") {
-      return res.status(503).json({ success: false, code: message, message: "Paystack account verification is not configured on the Veyra backend." });
+  } catch (error: any) {
+    console.error(
+      "Paystack account resolution error:",
+      error?.message || error
+    );
+
+    if (error?.message === "PAYSTACK_NOT_CONFIGURED") {
+      return res.status(503).json({
+        success: false,
+        code: "PAYSTACK_NOT_CONFIGURED",
+        message: "Paystack account verification is not configured on the Veyra backend."
+      });
     }
-    return res.status(404).json({ success: false, code: "ACCOUNT_NOT_RESOLVED", message: "Could not resolve account name. Check the bank and account number." });
+
+    return res.status(404).json({
+      success: false,
+      code: "ACCOUNT_NOT_RESOLVED",
+      message: "Could not resolve account name. Check the bank and account number."
+    });
   }
 }));
 
