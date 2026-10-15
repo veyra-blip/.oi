@@ -266,7 +266,7 @@ app.post("/api/services/payment", requireAuth, moneyLimiter, asyncRoute(async (r
     return res.status(400).json({ success: false, code: "INSUFFICIENT_BALANCE", message: "Insufficient wallet balance." });
   }
 
-  const transaction = await prisma.$transaction(async tx => {
+  const transaction = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const created = await tx.transaction.create({
       data: {
         reference: reference("PAY"),

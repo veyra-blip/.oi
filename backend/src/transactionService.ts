@@ -13,7 +13,7 @@ export async function internalTransfer(
   if (amount.lte(0)) throw new Error("INVALID_AMOUNT");
   if (senderId === recipientId) throw new Error("SELF_TRANSFER");
 
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const existing = await tx.idempotencyKey.findUnique({
       where: { key },
       include: { transaction: true }
