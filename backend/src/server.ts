@@ -17,13 +17,27 @@ app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 4000);
 
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173" }));
+const allowedOrigins = new Set([
+  "https://veyra-blip.github.io",
+  "http://localhost:5173",
+  "http://localhost:4000",
+  ...(process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map(x => x.trim()).filter(Boolean) : [])
+]);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    return callback(new Error("CORS_ORIGIN_NOT_ALLOWED"));
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: "100kb" }));
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 50 });
 const moneyLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30 });
 
 app.get("/api/health", (_req, res) => res.json({ success: true, service: "internal-wallet" }));
+app.get("/health", (_req, res) => res.json({ success: true, service: "internal-wallet" }));
+app.get("/", (_req, res) => res.json({ success: true, service: "Veyra API", status: "online" }));
 
 app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any) => {
   const body = z.object({
