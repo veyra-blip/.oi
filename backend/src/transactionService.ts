@@ -38,7 +38,7 @@ export async function internalTransfer(
       data: {
         reference: ref,
         senderId,
-        receiverId,
+        receiverId: recipientId,
         type: TransactionType.INTERNAL_TRANSFER,
         status: TransactionStatus.PROCESSING,
         amount,

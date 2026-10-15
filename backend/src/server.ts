@@ -327,6 +327,95 @@ app.get("/api/banks/lookup", requireAuth, asyncRoute(async (req: any, res: any) 
   res.json({ success: true, account: { accountNumber: account.accountNumber, accountName: account.accountName, bank: account.bank.name, bankCode } });
 }));
 
+app.post("/api/transfers/external/simulate", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
+  const body = z.object({
+    accountNumber: z.string().regex(/^\d{10}$/),
+    bankCode: z.string().min(2).max(20),
+    bankName: z.string().min(2).max(120),
+    accountName: z.string().min(2).max(120),
+    amount: z.coerce.number().positive().max(50000000),
+    narration: z.string().max(140).optional(),
+    pin: z.string().regex(/^\d{4}$/)
+  }).parse(req.body);
+
+  const user = await prisma.user.findUnique({ where: { id: req.userId }, include: { wallet: true } });
+  if (!user?.wallet) return res.status(404).json({ success: false, code: "WALLET_NOT_FOUND", message: "Wallet not found." });
+  if (user.pinLockedUntil && user.pinLockedUntil > new Date()) {
+    return res.status(423).json({ success: false, code: "PIN_LOCKED", message: "Transaction PIN is temporarily locked." });
+  }
+  const validPin = await argon2.verify(user.pinHash, body.pin);
+  if (!validPin) {
+    const failures = user.pinFailures + 1;
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        pinFailures: failures >= 5 ? 0 : failures,
+        pinLockedUntil: failures >= 5 ? new Date(Date.now() + 15 * 60 * 1000) : null
+      }
+    });
+    return res.status(401).json({ success: false, code: "INVALID_PIN", message: "Incorrect transaction PIN." });
+  }
+  await prisma.user.update({ where: { id: user.id }, data: { pinFailures: 0, pinLockedUntil: null } });
+
+  const amount = new Prisma.Decimal(body.amount.toFixed(2));
+  if (user.wallet.balance.lt(amount)) {
+    return res.status(400).json({ success: false, code: "INSUFFICIENT_BALANCE", message: "Insufficient wallet balance." });
+  }
+
+  const transaction = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const created = await tx.transaction.create({
+      data: {
+        reference: reference("BANKSIM"),
+        senderId: user.id,
+        type: "BANK_TRANSFER",
+        status: "PROCESSING",
+        amount,
+        total: amount,
+        narration: body.narration,
+        recipientName: body.accountName,
+        recipientAccount: body.accountNumber,
+        recipientBank: body.bankName,
+        metadata: {
+          simulated: true,
+          externalBank: true,
+          bankCode: body.bankCode,
+          provider: "Veyra Simulation"
+        }
+      }
+    });
+
+    await tx.wallet.update({ where: { userId: user.id }, data: { balance: { decrement: amount } } });
+    const completed = await tx.transaction.update({
+      where: { id: created.id },
+      data: { status: "SUCCESS", completedAt: new Date() }
+    });
+    await tx.transactionEntry.create({ data: { transactionId: completed.id, userId: user.id, type: "DEBIT", amount } });
+    await tx.notification.create({
+      data: {
+        userId: user.id,
+        type: "TRANSFER_SENT",
+        title: "Transfer Successful",
+        message: `₦${amount.toFixed(2)} simulated transfer to ${body.accountName} (${body.accountNumber}) at ${body.bankName}. No real money was sent.`
+      }
+    });
+    return completed;
+  });
+
+  res.json({
+    success: true,
+    simulated: true,
+    transaction,
+    receipt: {
+      title: "Transfer Successful",
+      amount: amount.toFixed(2),
+      accountName: body.accountName,
+      accountNumber: body.accountNumber,
+      bankName: body.bankName,
+      disclaimer: "Simulation transfer • No real money received"
+    }
+  });
+}));
+
 app.post("/api/services/payment", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
   const body = z.object({
     type: z.enum(["AIRTIME", "DATA", "ELECTRICITY", "TV", "INTERNET", "WATER", "EDUCATION"]),
