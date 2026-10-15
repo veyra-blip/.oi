@@ -22,7 +22,7 @@
   IMPORTANT: set API_BASE to the public URL where backend/src/server.ts is deployed.
   Example: https://your-veyra-api.example.com
 */
-const API_BASE = (window.VEYRA_API_BASE || localStorage.getItem('veyra_api_base') || 'http://localhost:4000').replace(/\/$/,'');
+const API_BASE = 'https://veyra-api-etnq.onrender.com';
 const TOKEN_KEY='veyra_access_token';
 const REFRESH_KEY='veyra_refresh_token';
 const money=n=>'₦'+Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -64,14 +64,14 @@ function splitName(name){const p=String(name||'').trim().split(/\s+/);return {fi
 async function register(f){
   const name=String(f.get('name')).trim(), n=splitName(name);
   try{
-    const d=await api('/api/auth/register',{method:'POST',body:JSON.stringify({firstName:n.firstName,lastName:n.lastName,username:String(f.get('username')).trim().toLowerCase(),phone:String(f.get('phone')).trim(),email:String(f.get('email')).trim().toLowerCase(),password:String(f.get('password')),pin:String(f.get('pin'))})},false);
-    setTokens(d.accessToken,d.refreshToken);await loadState();app();
+    const d=await api('/api/auth/register',{method:'POST',body:JSON.stringify({firstName:n.firstName,lastName:n.lastName,username:String(f.get('username')).trim().toLowerCase(),phone:String(f.get('phone')).trim(),email:String(f.get('email')).trim().toLowerCase(),password:String(f.get('password')),pin:String(f.get('pin')),nin:String(f.get('nin')||'').trim()})},false);
+    setTokens(d.accessToken,d.refreshToken);await app();
   }catch(e){msg(e.message,true)}
 }
 async function login(f){
   try{
     const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify({identifier:String(f.get('identity')).trim(),password:String(f.get('password'))})},false);
-    setTokens(d.accessToken,d.refreshToken);await loadState();app();
+    setTokens(d.accessToken,d.refreshToken);await app();
   }catch(e){msg(e.message,true)}
 }
 function forgot(){alert('Password reset requires a real OTP/reset endpoint on the Veyra backend. It is not faked in this shared-transfer build.')}
@@ -135,7 +135,7 @@ function addBeneficiary(){alert('Beneficiary storage is not yet connected to the
 function removeBeneficiary(i){current().beneficiaries.splice(i,1);go('beneficiaries')}
 function changePassword(){alert('Password-change endpoint needs to be added to the backend before this action can be enabled securely.')}
 function changePin(){alert('PIN-change endpoint needs to be added to the backend before this action can be enabled securely.')}
-function configureApi(){const v=prompt('Veyra API URL',API_BASE);if(v){localStorage.setItem('veyra_api_base',v.replace(/\/$/,''));alert('API URL saved. Reload the page to reconnect.')}}
+function configureApi(){alert('Veyra is connected to the live backend:\n\n'+API_BASE+'\n\nDo not change this unless you intentionally move the backend.');}
 async function logout(){try{await api('/api/auth/logout',{method:'POST'})}catch{}clearTokens();state={user:null,tx:[],notifications:[]};authView('login')}
 
 document.addEventListener('click',e=>{if(e.target.id==='modal')closeModal()});
