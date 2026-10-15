@@ -53,7 +53,9 @@ async function api(path,options={},retry=true){
   }catch(e){
     clearTimeout(timeout);
     if(e?.name==='AbortError')throw new Error('Veyra server timed out while waking or responding. Wait a few seconds and tap Retry.');
-    throw new Error('Cannot reach the Veyra API. Check the Render service or your internet connection.');
+    const origin=location.origin==='null'?'local file (file://)':location.origin;
+    const err=new Error('The Veyra server is online, but this browser could not read the API response. This is usually a CORS restriction when the HTML is opened directly as a file or from an unapproved website. Open the app from the approved Veyra web address, or add this site origin to the backend CORS settings.');
+    err.code='API_CORS_OR_NETWORK'; err.origin=origin; throw err;
   }
   clearTimeout(timeout);
   if(r.status===401&&retry&&localStorage.getItem(REFRESH_KEY)){
@@ -70,7 +72,7 @@ async function api(path,options={},retry=true){
 async function checkVeyraConnection(){
   try{
     const d=await api('/health',{},false);
-    return !!(d&&d.ok===true);
+    return !!(d&&d.success===true);
   }catch(e){
     return false;
   }
