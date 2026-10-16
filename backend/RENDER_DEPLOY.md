@@ -8,7 +8,7 @@ This folder is the corrected backend for the Veyra shared-wallet project.
 
 **Build Command:**
 ```text
-npm install && npx prisma generate && npm run build && npx prisma db push
+npm install && npx prisma generate && npx prisma migrate deploy && npm run build
 ```
 
 **Start Command:**
@@ -24,6 +24,7 @@ Add these in the Render Web Service:
 DATABASE_URL=<PostgreSQL Internal Database URL>
 JWT_SECRET=<Render-generated secret>
 FRONTEND_ORIGIN=<your deployed frontend URL>
+REFRESH_SECRET=<a different Render-generated secret>
 ```
 
 `PORT` does not need to be added. Render supplies it automatically.
@@ -43,6 +44,8 @@ It should return JSON similar to:
 ```
 
 ## Demo seed data
+
+The security migration must run before the new backend starts. Render uses `npx prisma migrate deploy` in the build command. Do not run `prisma db push` against production.
 
 If you want the two seeded test accounts, run the seed command once after the database has been created:
 
@@ -86,18 +89,3 @@ The backend now exposes:
 Set `PAYSTACK_SECRET_KEY` in Render Environment Variables. Do not place the secret key in the HTML or commit it to GitHub. Paystack's Resolve Account Number endpoint requires the account number and bank code and returns the resolved account name.
 
 The supplied `sk_test_...` key is for Paystack test mode. Paystack test and live environments are separate, so live account verification requires the live secret key when the integration is ready for production.
-
-## Termii carrier SMS configuration
-
-Set these Render environment variables:
-
-- `TERMII_API_KEY` = your private Termii API key
-- `TERMII_BASE_URL` = your account-specific Termii base URL, normally `https://api.ng.termii.com/api`
-- `TERMII_CHANNEL` = `dnd` for transactional SMS, if enabled for your Termii account
-- `TERMII_SENDER_IDS` = comma-separated Sender IDs approved for this Veyra account, for example `VEYRA,VEYRA ALERT`
-
-The first Sender ID in `TERMII_SENDER_IDS` is the backend fallback. The HTML can request a Sender ID, but the backend will only accept one that appears in this environment variable. HTML cannot change Render environment variables.
-
-For internal Veyra transfers, the backend sends two carrier SMS messages after a successful database transfer: one debit alert to the sender and one credit alert to the receiver. A Termii/carrier failure does not reverse the wallet transfer.
-
-Use only Sender IDs that Termii has approved for your account. Carrier delivery cannot be guaranteed by the application alone; Termii must accept the message and the carrier must deliver it.
