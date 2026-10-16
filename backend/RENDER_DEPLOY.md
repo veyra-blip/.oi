@@ -87,23 +87,17 @@ Set `PAYSTACK_SECRET_KEY` in Render Environment Variables. Do not place the secr
 
 The supplied `sk_test_...` key is for Paystack test mode. Paystack test and live environments are separate, so live account verification requires the live secret key when the integration is ready for production.
 
+## Termii carrier SMS configuration
 
-## Termii SMS notifications
+Set these Render environment variables:
 
-Set these in Render → the Veyra backend service → Environment. Do not commit live credentials to GitHub:
+- `TERMII_API_KEY` = your private Termii API key
+- `TERMII_BASE_URL` = your account-specific Termii base URL, normally `https://api.ng.termii.com/api`
+- `TERMII_CHANNEL` = `dnd` for transactional SMS, if enabled for your Termii account
+- `TERMII_SENDER_IDS` = comma-separated Sender IDs approved for this Veyra account, for example `VEYRA,VEYRA ALERT`
 
-- `TERMII_API_KEY`: your Termii live API key
-- `TERMII_BASE_URL`: `https://v4.api.termii.com` (your account-specific Termii Base URL)
-- `TERMII_SENDER_ID`: an approved Termii sender ID for your account, such as `VEYRA` only if approved
-- `TERMII_CHANNEL`: optional; defaults to `dnd` in this integration. Confirm the available route and charges in your Termii account; DND routing does not guarantee delivery.
+The first Sender ID in `TERMII_SENDER_IDS` is the backend fallback. The HTML can request a Sender ID, but the backend will only accept one that appears in this environment variable. HTML cannot change Render environment variables.
 
-SMS messages are sent after a simulated wallet transfer commits and clearly say that no real bank credit occurred. Internal Veyra transfers send to the sender and recipient phone numbers saved in their Veyra profiles. External simulated transfers send to the sender; an optional `recipientPhone` in the external simulation request can receive a separately labelled simulation SMS. Paystack account-name resolution does not return the recipient's phone number. SMS failures do not reverse a completed simulated transfer.
+For internal Veyra transfers, the backend sends two carrier SMS messages after a successful database transfer: one debit alert to the sender and one credit alert to the receiver. A Termii/carrier failure does not reverse the wallet transfer.
 
-
-### Termii endpoint construction
-
-The backend accepts either a Termii root Base URL or one that already ends in `/api`. With the configured value `https://v4.api.termii.com`, the backend sends SMS requests to:
-
-`https://v4.api.termii.com/api/sms/send`
-
-The API key is never stored in the source code or frontend. Put the live value in Render as `TERMII_API_KEY`. Termii documents that account-specific Base URLs are supplied from the dashboard and that API keys are used for authentication.
+Use only Sender IDs that Termii has approved for your account. Carrier delivery cannot be guaranteed by the application alone; Termii must accept the message and the carrier must deliver it.
