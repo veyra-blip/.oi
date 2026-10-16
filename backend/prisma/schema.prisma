@@ -13,6 +13,11 @@ enum UserStatus {
   LOCKED
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
 enum TransactionStatus {
   PENDING
   PROCESSING
@@ -88,6 +93,7 @@ model User {
   pinHash         String
   accountNumber   String           @unique
   status          UserStatus       @default(ACTIVE)
+  role            UserRole         @default(USER)
   pinFailures     Int              @default(0)
   pinLockedUntil  DateTime?
   createdAt       DateTime         @default(now())
@@ -155,11 +161,13 @@ model TransactionEntry {
 
 model IdempotencyKey {
   id            String       @id @default(cuid())
-  key           String       @unique
+  key           String
+  requestHash   String
   userId        String
   transactionId String       @unique
   transaction   Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
   createdAt     DateTime     @default(now())
+  @@unique([userId, key])
 }
 
 model Notification {
@@ -177,11 +185,14 @@ model Notification {
 model Session {
   id           String   @id @default(cuid())
   userId       String
-  refreshHash  String
-  expiresAt    DateTime
+  refreshHash          String
+  previousRefreshHash  String?
+  expiresAt            DateTime
+  revokedAt            DateTime?
   createdAt    DateTime @default(now())
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId])
+  @@index([userId, expiresAt])
 }
 
 model SecurityEvent {

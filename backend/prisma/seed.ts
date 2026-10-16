@@ -49,7 +49,7 @@ async function main() {
 
   const admin = await prisma.user.upsert({
     where: { email: "admin@example.com" },
-    update: {},
+    update: { role: "ADMIN" },
     create: {
       firstName: "System",
       lastName: "Admin",
@@ -58,7 +58,8 @@ async function main() {
       email: "admin@example.com",
       passwordHash: adminHash,
       pinHash: await argon2.hash("8642"),
-      accountNumber: "8199999999"
+      accountNumber: "8199999999",
+      role: "ADMIN"
     }
   });
 
