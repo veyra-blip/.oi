@@ -364,27 +364,32 @@ app.post("/api/transfers/external/simulate", requireAuth, moneyLimiter, asyncRou
     pin: z.string().regex(/^\d{4}$/)
   }).parse(req.body);
 
-  const user = await prisma.user.findUnique({ where: { id: req.userId }, include: { wallet: true } });
-  if (!user?.wallet) return res.status(404).json({ success: false, code: "WALLET_NOT_FOUND", message: "Wallet not found." });
-  try {
-    await verifyTransactionPin(req.userId, body.pin);
-  } catch (e: any) {
-    const code = e?.message || "INVALID_PIN";
-    return res.status(code === "PIN_LOCKED" ? 423 : code === "USER_NOT_FOUND" ? 404 : 401)
-      .json({ success: false, code, message: friendlyPinError(code) });
+  const existing = await tx.idempotencyKey.findUnique({
+  where: {
+    userId_key: {
+      userId: req.userId!,
+      key: requestKey
+    }
+  }
+});
+
+if (existing) {
+  if (existing.requestHash !== requestHash) {
+    throw new Error("IDEMPOTENCY_CONFLICT");
   }
 
-  const amount = new Prisma.Decimal(body.amount.toFixed(2));
-  const requestKey = idempotencyKey(req);
-  if (!requestKey) return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED", message: "A transaction request key is required." });
-  const requestHash = hashRequest({ accountNumber: body.accountNumber, bankCode: body.bankCode, bankName: body.bankName, accountName: body.accountName, amount: amount.toFixed(2), narration: body.narration || null });
-
-  const transaction = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const existing = await tx.idempotencyKey.findUnique({ where: { key: requestKey }, include: { transaction: true } });
-    if (existing) {
-      if (existing.userId !== req.userId || existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
-      return existing.transaction;
+  const existingTransaction = await tx.transaction.findUnique({
+    where: {
+      id: existing.transactionId
     }
+  });
+
+  if (!existingTransaction) {
+    throw new Error("IDEMPOTENCY_TRANSACTION_NOT_FOUND");
+  }
+
+  return existingTransaction;
+}
     const created = await tx.transaction.create({
       data: {
         reference: reference("BANKSIM"),
