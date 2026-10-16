@@ -10,7 +10,6 @@ import { asyncRoute, requireAuth } from "./middleware.js";
 import { hashToken, signAccess, signRefresh, verifyRefresh } from "./auth.js";
 import { internalTransfer } from "./transactionService.js";
 import { idempotencyKey, reference } from "./utils.js";
-import { sendTermiiSms } from "./sms.js";
 import { Prisma } from "@prisma/client";
 
 const app = express();
@@ -168,8 +167,31 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
     recipientId: z.string(),
     amount: z.coerce.number().positive().max(50000000),
     narration: z.string().max(140).optional(),
-    pin: z.string().regex(/^\d{4}$/)
+    pin: z.string().regex(/^\d{4}$/),
+    senderId: z.string().trim().min(1).max(30).optional()
   }).parse(req.body);
+
+  // The browser may request a Sender ID, but it can never choose an arbitrary
+  // value. Only Sender IDs configured by the backend operator are allowed.
+  // The first configured ID is the fallback when the browser omits or requests
+  // an unapproved ID.
+  const approvedSenderIds = (process.env.TERMII_SENDER_IDS || '')
+    .split(',')
+    .map((id) => id.replace(/[\r\n\t]/g, '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const defaultSenderId = approvedSenderIds[0];
+  const selectedSenderId = approvedSenderIds.find(
+    (id) => id.toLowerCase() === (body.senderId || '').toLowerCase()
+  ) || defaultSenderId;
+
+  if (!selectedSenderId) {
+    return res.status(503).json({
+      success: false,
+      code: "SMS_SENDER_NOT_CONFIGURED",
+      message: "No Veyra SMS Sender ID is configured on the backend."
+    });
+  }
 
   const user = await prisma.user.findUnique({ where: { id: req.userId } });
   if (!user) return res.status(404).json({ success: false, message: "User not found." });
@@ -199,7 +221,8 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
       body.recipientId,
       new Prisma.Decimal(body.amount.toFixed(2)),
       body.narration,
-      idempotencyKey(req)
+      idempotencyKey(req),
+      selectedSenderId
     );
     res.json({ success: true, transaction });
   } catch (e: any) {
@@ -334,9 +357,6 @@ app.post("/api/transfers/external/simulate", requireAuth, moneyLimiter, asyncRou
     bankCode: z.string().min(2).max(20),
     bankName: z.string().min(2).max(120),
     accountName: z.string().min(2).max(120),
-    // Optional recipient phone for a clearly labelled simulated SMS only.
-    // Account-name resolution does not provide this number automatically.
-    recipientPhone: z.string().regex(/^(?:0\d{10}|234\d{10}|\+234\d{10})$/).optional(),
     amount: z.coerce.number().positive().max(50000000),
     narration: z.string().max(140).optional(),
     pin: z.string().regex(/^\d{4}$/)
@@ -404,32 +424,6 @@ app.post("/api/transfers/external/simulate", requireAuth, moneyLimiter, asyncRou
     });
     return completed;
   });
-
-  // Send SMS only after the simulated transaction commits. SMS errors never
-  // reverse the wallet transaction or change the successful API response.
-  try {
-    const senderAfter = await prisma.user.findUnique({
-      where: { id: user.id },
-      include: { wallet: true }
-    });
-    if (senderAfter?.wallet) {
-      const senderName = `${senderAfter.firstName} ${senderAfter.lastName}`;
-      const senderMessage = `VEYRA SIMULATION: Your simulated transfer of ₦${amount.toFixed(2)} to ${body.accountName} at ${body.bankName} (account ending ${body.accountNumber.slice(-4)}) succeeded. Ref: ${transaction.reference}. Available Veyra balance: ₦${senderAfter.wallet.balance.toFixed(2)}. No real bank transfer occurred.`;
-      const smsJobs: Promise<any>[] = [sendTermiiSms(senderAfter.phone, senderMessage)];
-
-      if (body.recipientPhone) {
-        const recipientMessage = `VEYRA SIMULATION: A simulated transfer of ₦${amount.toFixed(2)} was initiated for ${body.accountName} at ${body.bankName}, account ending ${body.accountNumber.slice(-4)}. Ref: ${transaction.reference}. No real funds were credited. This message is not a bank credit alert.`;
-        smsJobs.push(sendTermiiSms(body.recipientPhone, recipientMessage));
-      }
-
-      const smsResults = await Promise.allSettled(smsJobs);
-      if (smsResults.some(item => item.status === "rejected" || (item.status === "fulfilled" && !item.value.ok))) {
-        console.warn("One or more external simulated-transfer SMS notifications could not be sent.");
-      }
-    }
-  } catch (error: any) {
-    console.warn("External simulated-transfer SMS preparation failed:", error?.name || "unknown error");
-  }
 
   res.json({
     success: true,

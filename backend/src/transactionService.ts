@@ -3,12 +3,72 @@ import { prisma } from "./db.js";
 import { reference } from "./utils.js";
 import { sendTermiiSms } from "./sms.js";
 
+function maskedAccount(account: string): string {
+  const value = String(account || "");
+  if (value.length <= 4) return value;
+  return `${value.slice(0, 2)}****${value.slice(-4)}`;
+}
+
+function lagosDate(): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Lagos",
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
+  })
+    .format(new Date())
+    .toUpperCase();
+}
+
+function money(amount: Prisma.Decimal): string {
+  return `₦${amount.toFixed(2)}`;
+}
+
+function buildSenderSms(
+  senderName: string,
+  senderAccount: string,
+  receiverName: string,
+  amount: Prisma.Decimal,
+  balance: Prisma.Decimal,
+  ref: string
+): string {
+  return [
+    "DEBIT ALERT",
+    `DR: Acct: ${maskedAccount(senderAccount)}`,
+    `Amt: ${money(amount)}`,
+    `Descr: TRFR TO ${receiverName}`,
+    `Avail Bal: ${money(balance)}`,
+    `Date: ${lagosDate()}`,
+    `Ref: ${ref}`,
+    `From: ${senderName}`
+  ].join(" | ");
+}
+
+function buildReceiverSms(
+  receiverAccount: string,
+  senderName: string,
+  amount: Prisma.Decimal,
+  balance: Prisma.Decimal,
+  ref: string
+): string {
+  return [
+    "CREDIT ALERT",
+    `CR: Acct: ${maskedAccount(receiverAccount)}`,
+    `Amt: ${money(amount)}`,
+    `Descr: TRFR FROM ${senderName}`,
+    `Avail Bal: ${money(balance)}`,
+    `Date: ${lagosDate()}`,
+    `Ref: ${ref}`
+  ].join(" | ");
+}
+
 export async function internalTransfer(
   senderId: string,
   recipientId: string,
   amount: Prisma.Decimal,
   narration: string | undefined,
-  key: string
+  key: string,
+  smsSenderId: string
 ) {
   if (!key) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
   if (amount.lte(0)) throw new Error("INVALID_AMOUNT");
@@ -98,8 +158,8 @@ export async function internalTransfer(
     return { transaction: completed, created: true };
   });
 
-  // Send SMS only for a newly committed transfer. An idempotent retry returns
-  // the existing transaction without sending duplicate SMS messages.
+  // SMS is deliberately outside the database transaction. A carrier/API
+  // failure must never undo a completed wallet transfer.
   if (result.created) {
     try {
       const [senderAfter, receiverAfter] = await Promise.all([
@@ -108,27 +168,42 @@ export async function internalTransfer(
       ]);
 
       if (senderAfter?.wallet && receiverAfter?.wallet) {
-        const amountText = `₦${amount.toFixed(2)}`;
-        const senderName = `${senderAfter.firstName} ${senderAfter.lastName}`;
-        const receiverName = `${receiverAfter.firstName} ${receiverAfter.lastName}`;
-        const senderLast4 = senderAfter.accountNumber.slice(-4);
-        const receiverLast4 = receiverAfter.accountNumber.slice(-4);
-        const senderBalance = `₦${senderAfter.wallet.balance.toFixed(2)}`;
-        const receiverBalance = `₦${receiverAfter.wallet.balance.toFixed(2)}`;
+        const senderName = `${senderAfter.firstName} ${senderAfter.lastName}`.trim();
+        const receiverName = `${receiverAfter.firstName} ${receiverAfter.lastName}`.trim();
 
-        const senderMessage = `VEYRA SIMULATION: Your simulated transfer of ${amountText} to ${receiverName} (Veyra account ending ${receiverLast4}) succeeded. Ref: ${result.transaction.reference}. Available Veyra balance: ${senderBalance}. No real bank transfer occurred.`;
-        const receiverMessage = `VEYRA SIMULATION: ${amountText} was added to your simulated Veyra wallet from ${senderName} (Veyra account ending ${senderLast4}). Ref: ${result.transaction.reference}. Available Veyra balance: ${receiverBalance}. This is not a real bank credit.`;
+        const senderMessage = buildSenderSms(
+          senderName,
+          senderAfter.accountNumber,
+          receiverName,
+          amount,
+          senderAfter.wallet.balance,
+          result.transaction.reference
+        );
 
+        const receiverMessage = buildReceiverSms(
+          receiverAfter.accountNumber,
+          senderName,
+          amount,
+          receiverAfter.wallet.balance,
+          result.transaction.reference
+        );
+
+        // Both parties receive a carrier SMS. The receiver is not dependent
+        // on the sender SMS succeeding because the sends are independent.
         const smsResults = await Promise.allSettled([
-          sendTermiiSms(senderAfter.phone, senderMessage),
-          sendTermiiSms(receiverAfter.phone, receiverMessage)
+          sendTermiiSms(senderAfter.phone, senderMessage, smsSenderId),
+          sendTermiiSms(receiverAfter.phone, receiverMessage, smsSenderId)
         ]);
-        if (smsResults.some(item => item.status === "rejected" || (item.status === "fulfilled" && !item.value.ok))) {
-          console.warn("One or more Veyra transfer SMS notifications could not be sent.");
+
+        for (const item of smsResults) {
+          if (item.status === "rejected") {
+            console.warn("Veyra transfer SMS failed:", item.reason?.name || "unknown error");
+          } else if (!item.value.ok) {
+            console.warn("Veyra transfer SMS was not accepted by Termii:", item.value.reason || "unknown Termii error");
+          }
         }
       }
     } catch (error: any) {
-      // The wallet transfer is already committed; SMS problems must not undo it.
       console.warn("Veyra transfer SMS preparation failed:", error?.name || "unknown error");
     }
   }

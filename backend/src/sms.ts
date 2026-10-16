@@ -1,12 +1,9 @@
 /**
  * Termii SMS integration for Veyra.
  *
- * IMPORTANT:
- * - TERMII_API_KEY must stay in Render environment variables.
- * - TERMII_BASE_URL is the account-specific base URL from the Termii dashboard.
- * - This helper accepts either a root base URL (https://v4.api.termii.com)
- *   or a base URL that already ends in /api.
- * - SMS failures never reverse a completed simulated wallet transaction.
+ * TERMII_API_KEY and TERMII_BASE_URL stay on the backend/Render only.
+ * The Sender ID is selected by the backend from TERMII_SENDER_IDS.
+ * SMS failures never reverse a completed simulated wallet transaction.
  */
 
 type TermiiResult = {
@@ -24,23 +21,37 @@ function normalizeNigerianPhone(value: string): string | null {
 }
 
 function termiiApiBase(): string {
-  const configured = (process.env.TERMII_BASE_URL || "https://api.ng.termii.com/api").trim().replace(/\/+$/, "");
+  const configured = (process.env.TERMII_BASE_URL || "https://api.ng.termii.com/api")
+    .trim()
+    .replace(/\/+$/, "");
   return /\/api$/i.test(configured) ? configured : `${configured}/api`;
 }
 
-export async function sendTermiiSms(to: string, sms: string): Promise<TermiiResult> {
+function cleanSenderId(value: string): string | null {
+  const sender = String(value || "")
+    .replace(/[\r\n\t]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return sender || null;
+}
+
+export async function sendTermiiSms(
+  to: string,
+  sms: string,
+  senderId: string
+): Promise<TermiiResult> {
   const apiKey = process.env.TERMII_API_KEY?.trim();
-  const senderId = process.env.TERMII_SENDER_ID?.trim();
+  const configuredSenderId = cleanSenderId(senderId);
   const channel = (process.env.TERMII_CHANNEL || "dnd").trim();
   const normalizedTo = normalizeNigerianPhone(to);
 
-  if (!apiKey || !senderId) {
-    console.warn("Termii SMS skipped: TERMII_API_KEY or TERMII_SENDER_ID is not configured.");
+  if (!apiKey || !configuredSenderId) {
+    console.warn("Termii SMS skipped: API key or approved Sender ID is not configured.");
     return { ok: false, reason: "TERMII_NOT_CONFIGURED" };
   }
 
   if (!normalizedTo) {
-    console.warn("Termii SMS skipped: recipient phone number is not a valid Nigerian mobile number.");
+    console.warn("Termii SMS skipped: invalid Nigerian recipient phone number.");
     return { ok: false, reason: "INVALID_RECIPIENT_PHONE" };
   }
 
@@ -55,7 +66,7 @@ export async function sendTermiiSms(to: string, sms: string): Promise<TermiiResu
       body: JSON.stringify({
         api_key: apiKey,
         to: normalizedTo,
-        from: senderId,
+        from: configuredSenderId,
         sms,
         type: "plain",
         channel
@@ -71,9 +82,16 @@ export async function sendTermiiSms(to: string, sms: string): Promise<TermiiResu
     }
 
     if (!response.ok || data?.code === "error" || data?.status === false) {
-      // Do not log the API key, destination phone, or SMS body.
       console.warn("Termii SMS request failed. HTTP status:", response.status);
-      return { ok: false, reason: "TERMII_REQUEST_FAILED" };
+      if (data?.message) {
+        console.warn("Termii response message:", String(data.message).slice(0, 300));
+      }
+      return {
+        ok: false,
+        reason: data?.message
+          ? `TERMII_REQUEST_FAILED:${String(data.message).slice(0, 200)}`
+          : "TERMII_REQUEST_FAILED"
+      };
     }
 
     return {
@@ -81,7 +99,6 @@ export async function sendTermiiSms(to: string, sms: string): Promise<TermiiResu
       messageId: data?.message_id ? String(data.message_id) : undefined
     };
   } catch (error: any) {
-    // Do not log credentials, phone numbers, or message content.
     console.warn("Termii SMS request could not be completed:", error?.name || "network error");
     return { ok: false, reason: "TERMII_NETWORK_ERROR" };
   }
