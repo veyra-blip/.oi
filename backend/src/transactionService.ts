@@ -1,65 +1,41 @@
 import { Prisma, TransactionStatus, TransactionType, NotificationType } from "@prisma/client";
 import { prisma } from "./db.js";
+import { hashRequest } from "./auth.js";
 import { reference } from "./utils.js";
 import { sendTermiiSms } from "./sms.js";
 
-function maskedAccount(account: string): string {
-  const value = String(account || "");
-  if (value.length <= 4) return value;
-  return `${value.slice(0, 2)}****${value.slice(-4)}`;
-}
+function money(value: Prisma.Decimal) { return `₦${value.toFixed(2)}`; }
+function lagosDate() { return new Intl.DateTimeFormat("en-NG", { dateStyle: "medium", timeStyle: "short", timeZone: "Africa/Lagos" }).format(new Date()); }
+function maskAccount(value: string) { return value.length >= 4 ? `****${value.slice(-4)}` : value; }
 
-function lagosDate(): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Africa/Lagos",
-    day: "2-digit",
-    month: "short",
-    year: "numeric"
-  })
-    .format(new Date())
-    .toUpperCase();
-}
-
-function money(amount: Prisma.Decimal): string {
-  return `₦${amount.toFixed(2)}`;
-}
-
-function buildSenderSms(
-  senderName: string,
-  senderAccount: string,
-  receiverName: string,
-  amount: Prisma.Decimal,
-  balance: Prisma.Decimal,
-  ref: string
-): string {
+function senderSms(receiverName: string, receiverAccount: string, amount: Prisma.Decimal, balance: Prisma.Decimal, ref: string) {
   return [
-    "DEBIT ALERT",
-    `DR: Acct: ${maskedAccount(senderAccount)}`,
+    "DEBIT ALERT", "",
+    `DR: Acct: ${maskAccount(receiverAccount)}`,
     `Amt: ${money(amount)}`,
     `Descr: TRFR TO ${receiverName}`,
-    `Avail Bal: ${money(balance)}`,
+    `Remaining Bal: ${money(balance)}`,
     `Date: ${lagosDate()}`,
     `Ref: ${ref}`,
-    `From: ${senderName}`
-  ].join(" | ");
+    "",
+    "Veyra simulated wallet alert.",
+    "No real bank transfer occurred."
+  ].join("\n");
 }
 
-function buildReceiverSms(
-  receiverAccount: string,
-  senderName: string,
-  amount: Prisma.Decimal,
-  balance: Prisma.Decimal,
-  ref: string
-): string {
+function receiverSms(senderName: string, senderAccount: string, amount: Prisma.Decimal, balance: Prisma.Decimal, ref: string) {
   return [
-    "CREDIT ALERT",
-    `CR: Acct: ${maskedAccount(receiverAccount)}`,
+    "CREDIT ALERT", "",
+    `CR: Acct: ${maskAccount(senderAccount)}`,
     `Amt: ${money(amount)}`,
     `Descr: TRFR FROM ${senderName}`,
-    `Avail Bal: ${money(balance)}`,
+    `Available Bal: ${money(balance)}`,
     `Date: ${lagosDate()}`,
-    `Ref: ${ref}`
-  ].join(" | ");
+    `Ref: ${ref}`,
+    "",
+    "Veyra simulated wallet alert.",
+    "No real bank transfer occurred."
+  ].join("\n");
 }
 
 export async function internalTransfer(
@@ -68,58 +44,59 @@ export async function internalTransfer(
   amount: Prisma.Decimal,
   narration: string | undefined,
   key: string,
-  smsSenderId: string
+  smsSenderId?: string
 ) {
   if (!key) throw new Error("IDEMPOTENCY_KEY_REQUIRED");
   if (amount.lte(0)) throw new Error("INVALID_AMOUNT");
   if (senderId === recipientId) throw new Error("SELF_TRANSFER");
 
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const existing = await tx.idempotencyKey.findUnique({
-      where: { key },
-      include: { transaction: true }
-    });
-    if (existing) return { transaction: existing.transaction, created: false };
+  const requestHash = hashRequest({ recipientId, amount: amount.toFixed(2), narration: narration || null });
 
-    const sender = await tx.user.findUnique({
-      where: { id: senderId },
-      include: { wallet: true }
-    });
-    const receiver = await tx.user.findUnique({
-      where: { id: recipientId },
-      include: { wallet: true }
-    });
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const existing = await tx.idempotencyKey.findFirst({ where: { key }, include: { transaction: true } });
+    if (existing) {
+      if (existing.userId !== senderId || existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
+      return { transaction: existing.transaction, created: false };
+    }
+
+    const [sender, receiver] = await Promise.all([
+      tx.user.findUnique({ where: { id: senderId }, include: { wallet: true } }),
+      tx.user.findUnique({ where: { id: recipientId }, include: { wallet: true } })
+    ]);
 
     if (!sender || !receiver || !sender.wallet || !receiver.wallet) throw new Error("ACCOUNT_NOT_FOUND");
     if (sender.status !== "ACTIVE" || receiver.status !== "ACTIVE") throw new Error("ACCOUNT_NOT_ACTIVE");
-    if (sender.wallet.balance.lt(amount)) throw new Error("INSUFFICIENT_BALANCE");
+    if (sender.wallet.status !== "ACTIVE" || receiver.wallet.status !== "ACTIVE") throw new Error("WALLET_NOT_ACTIVE");
 
-    const ref = reference("INT");
+    const debit = await tx.wallet.updateMany({
+      where: { userId: senderId, status: "ACTIVE", balance: { gte: amount } },
+      data: { balance: { decrement: amount } }
+    });
+    if (debit.count !== 1) throw new Error("INSUFFICIENT_BALANCE");
+
+    await tx.wallet.update({ where: { userId: recipientId }, data: { balance: { increment: amount } } });
+
+    const [senderWalletAfter, receiverWalletAfter] = await Promise.all([
+      tx.wallet.findUnique({ where: { userId: senderId }, select: { balance: true } }),
+      tx.wallet.findUnique({ where: { userId: recipientId }, select: { balance: true } })
+    ]);
+
     const txRecord = await tx.transaction.create({
       data: {
-        reference: ref,
+        reference: reference("INT"),
         senderId,
         receiverId: recipientId,
         type: TransactionType.INTERNAL_TRANSFER,
-        status: TransactionStatus.PROCESSING,
+        status: TransactionStatus.SUCCESS,
         amount,
         fee: 0,
         vat: 0,
         total: amount,
         narration,
-        recipientName: `${receiver.firstName} ${receiver.lastName}`,
-        recipientAccount: receiver.accountNumber
+        recipientName: `${receiver.firstName} ${receiver.lastName}`.trim(),
+        recipientAccount: receiver.accountNumber,
+        completedAt: new Date()
       }
-    });
-
-    await tx.wallet.update({
-      where: { userId: senderId },
-      data: { balance: { decrement: amount } }
-    });
-
-    await tx.wallet.update({
-      where: { userId: recipientId },
-      data: { balance: { increment: amount } }
     });
 
     await tx.transactionEntry.createMany({
@@ -129,84 +106,39 @@ export async function internalTransfer(
       ]
     });
 
-    const completed = await tx.transaction.update({
-      where: { id: txRecord.id },
-      data: { status: TransactionStatus.SUCCESS, completedAt: new Date() }
-    });
-
     await tx.notification.createMany({
       data: [
-        {
-          userId: senderId,
-          type: NotificationType.TRANSFER_SENT,
-          title: "Transfer Successful",
-          message: `₦${amount.toFixed(2)} was sent to ${receiver.firstName} ${receiver.lastName}.`
-        },
-        {
-          userId: recipientId,
-          type: NotificationType.TRANSFER_RECEIVED,
-          title: "Money Received",
-          message: `₦${amount.toFixed(2)} was received from ${sender.firstName} ${sender.lastName}.`
-        }
+        { userId: senderId, type: NotificationType.TRANSFER_SENT, title: "Transfer Successful", message: `₦${amount.toFixed(2)} was sent to ${receiver.firstName} ${receiver.lastName}.` },
+        { userId: recipientId, type: NotificationType.TRANSFER_RECEIVED, title: "Money Received", message: `₦${amount.toFixed(2)} was received from ${sender.firstName} ${sender.lastName}.` }
       ]
     });
 
-    await tx.idempotencyKey.create({
-      data: { key, userId: senderId, transactionId: completed.id }
-    });
+    await tx.idempotencyKey.create({ data: { key, userId: senderId, requestHash, transactionId: txRecord.id } });
 
-    return { transaction: completed, created: true };
-  });
+    return {
+      transaction: txRecord,
+      created: true,
+      senderName: `${sender.firstName} ${sender.lastName}`.trim(),
+      receiverName: `${receiver.firstName} ${receiver.lastName}`.trim(),
+      senderPhone: sender.phone,
+      receiverPhone: receiver.phone,
+      senderAccount: sender.accountNumber,
+      receiverAccount: receiver.accountNumber,
+      senderBalance: senderWalletAfter?.balance || new Prisma.Decimal(0),
+      receiverBalance: receiverWalletAfter?.balance || new Prisma.Decimal(0)
+    };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
-  // SMS is deliberately outside the database transaction. A carrier/API
-  // failure must never undo a completed wallet transfer.
   if (result.created) {
-    try {
-      const [senderAfter, receiverAfter] = await Promise.all([
-        prisma.user.findUnique({ where: { id: senderId }, include: { wallet: true } }),
-        prisma.user.findUnique({ where: { id: recipientId }, include: { wallet: true } })
-      ]);
-
-      if (senderAfter?.wallet && receiverAfter?.wallet) {
-        const senderName = `${senderAfter.firstName} ${senderAfter.lastName}`.trim();
-        const receiverName = `${receiverAfter.firstName} ${receiverAfter.lastName}`.trim();
-
-        const senderMessage = buildSenderSms(
-          senderName,
-          senderAfter.accountNumber,
-          receiverName,
-          amount,
-          senderAfter.wallet.balance,
-          result.transaction.reference
-        );
-
-        const receiverMessage = buildReceiverSms(
-          receiverAfter.accountNumber,
-          senderName,
-          amount,
-          receiverAfter.wallet.balance,
-          result.transaction.reference
-        );
-
-        // Both parties receive a carrier SMS. The receiver is not dependent
-        // on the sender SMS succeeding because the sends are independent.
-        const smsResults = await Promise.allSettled([
-          sendTermiiSms(senderAfter.phone, senderMessage, smsSenderId),
-          sendTermiiSms(receiverAfter.phone, receiverMessage, smsSenderId)
-        ]);
-
-        for (const item of smsResults) {
-          if (item.status === "rejected") {
-            console.warn("Veyra transfer SMS failed:", item.reason?.name || "unknown error");
-          } else if (!item.value.ok) {
-            console.warn("Veyra transfer SMS was not accepted by Termii:", item.value.reason || "unknown Termii error");
-          }
-        }
-      }
-    } catch (error: any) {
-      console.warn("Veyra transfer SMS preparation failed:", error?.name || "unknown error");
+    const [senderSmsResult, receiverSmsResult] = await Promise.allSettled([
+      sendTermiiSms(result.senderPhone, senderSms(result.receiverName, result.receiverAccount, amount, result.senderBalance, result.transaction.reference), smsSenderId),
+      sendTermiiSms(result.receiverPhone, receiverSms(result.senderName, result.senderAccount, amount, result.receiverBalance, result.transaction.reference), smsSenderId)
+    ]);
+    for (const item of [senderSmsResult, receiverSmsResult]) {
+      if (item.status === "rejected") console.warn("Veyra transfer SMS failed:", item.reason?.name || "unknown error");
+      else if (!item.value.ok) console.warn("Veyra transfer SMS not accepted:", item.value.reason || "unknown Termii error");
     }
   }
 
-  return result.transaction;
+  return result;
 }

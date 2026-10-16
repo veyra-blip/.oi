@@ -1,105 +1,57 @@
-/**
- * Termii SMS integration for Veyra.
- *
- * TERMII_API_KEY and TERMII_BASE_URL stay on the backend/Render only.
- * The Sender ID is selected by the backend from TERMII_SENDER_IDS.
- * SMS failures never reverse a completed simulated wallet transaction.
- */
-
-type TermiiResult = {
-  ok: boolean;
-  messageId?: string;
-  reason?: string;
-};
+type TermiiResult = { ok: boolean; messageId?: string; reason?: string };
 
 function normalizeNigerianPhone(value: string): string | null {
-  const raw = String(value || "").trim().replace(/[\s()-]/g, "");
+  const raw = String(value || '').trim().replace(/[\s()-]/g, '');
   if (/^0\d{10}$/.test(raw)) return `234${raw.slice(1)}`;
   if (/^234\d{10}$/.test(raw)) return raw;
   if (/^\+234\d{10}$/.test(raw)) return raw.slice(1);
   return null;
 }
 
-function termiiApiBase(): string {
-  const configured = (process.env.TERMII_BASE_URL || "https://api.ng.termii.com/api")
-    .trim()
-    .replace(/\/+$/, "");
+function cleanSenderId(value: string | undefined): string | null {
+  const sender = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!sender) return null;
+  return sender.replace(/[\r\n\t]/g, '').slice(0, 30).trim() || null;
+}
+
+function selectedSenderId(requested?: string) {
+  const allowed = (process.env.TERMII_SENDER_IDS || '')
+    .split(',')
+    .map(x => cleanSenderId(x))
+    .filter((x): x is string => Boolean(x));
+  if (!allowed.length) return cleanSenderId(requested) || cleanSenderId(process.env.TERMII_SENDER_ID);
+  const requestedClean = cleanSenderId(requested);
+  return (requestedClean && allowed.includes(requestedClean)) ? requestedClean : allowed[0];
+}
+
+function termiiApiBase() {
+  const configured = (process.env.TERMII_BASE_URL || 'https://api.ng.termii.com/api').trim().replace(/\/+$/, '');
   return /\/api$/i.test(configured) ? configured : `${configured}/api`;
 }
 
-function cleanSenderId(value: string): string | null {
-  const sender = String(value || "")
-    .replace(/[\r\n\t]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return sender || null;
-}
-
-export async function sendTermiiSms(
-  to: string,
-  sms: string,
-  senderId: string
-): Promise<TermiiResult> {
+export async function sendTermiiSms(to: string, sms: string, requestedSenderId?: string): Promise<TermiiResult> {
   const apiKey = process.env.TERMII_API_KEY?.trim();
-  const configuredSenderId = cleanSenderId(senderId);
-  const channel = (process.env.TERMII_CHANNEL || "dnd").trim();
+  const senderId = selectedSenderId(requestedSenderId);
+  const channel = (process.env.TERMII_CHANNEL || 'dnd').trim();
   const normalizedTo = normalizeNigerianPhone(to);
-
-  if (!apiKey || !configuredSenderId) {
-    console.warn("Termii SMS skipped: API key or approved Sender ID is not configured.");
-    return { ok: false, reason: "TERMII_NOT_CONFIGURED" };
-  }
-
-  if (!normalizedTo) {
-    console.warn("Termii SMS skipped: invalid Nigerian recipient phone number.");
-    return { ok: false, reason: "INVALID_RECIPIENT_PHONE" };
-  }
-
-  if (!sms.trim()) {
-    return { ok: false, reason: "EMPTY_SMS" };
-  }
+  if (!apiKey || !senderId) return { ok: false, reason: 'TERMII_NOT_CONFIGURED' };
+  if (!normalizedTo) return { ok: false, reason: 'INVALID_RECIPIENT_PHONE' };
+  if (!sms.trim()) return { ok: false, reason: 'EMPTY_SMS' };
 
   try {
     const response = await fetch(`${termiiApiBase()}/sms/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        api_key: apiKey,
-        to: normalizedTo,
-        from: configuredSenderId,
-        sms,
-        type: "plain",
-        channel
-      }),
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, to: normalizedTo, from: senderId, sms, type: 'plain', channel }),
       signal: AbortSignal.timeout(12000)
     });
-
     let data: any = {};
-    try {
-      data = await response.json();
-    } catch {
-      data = {};
+    try { data = await response.json(); } catch {}
+    if (!response.ok || data?.code === 'error' || data?.status === false) {
+      return { ok: false, reason: 'TERMII_REQUEST_FAILED' };
     }
-
-    if (!response.ok || data?.code === "error" || data?.status === false) {
-      console.warn("Termii SMS request failed. HTTP status:", response.status);
-      if (data?.message) {
-        console.warn("Termii response message:", String(data.message).slice(0, 300));
-      }
-      return {
-        ok: false,
-        reason: data?.message
-          ? `TERMII_REQUEST_FAILED:${String(data.message).slice(0, 200)}`
-          : "TERMII_REQUEST_FAILED"
-      };
-    }
-
-    return {
-      ok: true,
-      messageId: data?.message_id ? String(data.message_id) : undefined
-    };
-  } catch (error: any) {
-    console.warn("Termii SMS request could not be completed:", error?.name || "network error");
-    return { ok: false, reason: "TERMII_NETWORK_ERROR" };
+    return { ok: true, messageId: data?.message_id ? String(data.message_id) : undefined };
+  } catch {
+    return { ok: false, reason: 'TERMII_NETWORK_ERROR' };
   }
 }
