@@ -132,9 +132,27 @@ async function openFaceReset(){
 async function confirmFaceReset(faceToken){const identifier=document.getElementById('resetIdentity').value.trim(),newPassword=document.getElementById('resetPassword').value;try{const d=await api('/api/auth/reset/confirm',{method:'POST',body:JSON.stringify({identifier,faceToken,newPassword})},false);closeModal();authView('login',d.message)}catch(e){alert(e.message)}}
 
 async function loadState(){
-  const [m,t,n,sv,cd,lo]=await Promise.all([api('/api/me'),api('/api/transactions'),api('/api/notifications'),api('/api/savings'),api('/api/cards'),api('/api/loans')]);
+  // /api/me is the authentication check. Do not throw the user back to
+  // login just because a secondary dashboard endpoint is temporarily down.
+  const m=await api('/api/me');
   const u=m.user;
-  state.user={...u,name:`${u.firstName} ${u.lastName}`,account:u.accountNumber,balance:Number(u.balance),showBalance:true,savings:(sv.savings||[]).reduce((a,x)=>a+Number(x.balance||0),0),savingsAccounts:sv.savings||[],cards:cd.cards||[],loans:lo.loans||[],loan:(lo.loans||[]).filter(x=>x.status==='ACTIVE'||x.status==='APPROVED').reduce((a,x)=>a+Number(x.totalRepayable||0),0),notifications:n.notifications||[],tx:normalizeTx(t.transactions||[]),beneficiaries:[],role:'user'};state.user.beneficiaries=JSON.parse(localStorage.getItem('veyra_beneficiaries_'+u.id)||'[]');
+
+  let t={transactions:[]},n={notifications:[]},sv={savings:[]},cd={cards:[]},lo={loans:[]};
+  const results=await Promise.allSettled([
+    api('/api/transactions'),
+    api('/api/notifications'),
+    api('/api/savings'),
+    api('/api/cards'),
+    api('/api/loans')
+  ]);
+  if(results[0].status==='fulfilled') t=results[0].value||t;
+  if(results[1].status==='fulfilled') n=results[1].value||n;
+  if(results[2].status==='fulfilled') sv=results[2].value||sv;
+  if(results[3].status==='fulfilled') cd=results[3].value||cd;
+  if(results[4].status==='fulfilled') lo=results[4].value||lo;
+
+  state.user={...u,name:`${u.firstName} ${u.lastName}`,account:u.accountNumber,balance:Number(u.balance),showBalance:true,savings:(sv.savings||[]).reduce((a,x)=>a+Number(x.balance||0),0),savingsAccounts:sv.savings||[],cards:cd.cards||[],loans:lo.loans||[],loan:(lo.loans||[]).filter(x=>x.status==='ACTIVE'||x.status==='APPROVED').reduce((a,x)=>a+Number(x.totalRepayable||0),0),notifications:n.notifications||[],tx:normalizeTx(t.transactions||[]),beneficiaries:[],role:'user'};
+  state.user.beneficiaries=JSON.parse(localStorage.getItem('veyra_beneficiaries_'+u.id)||'[]');
   state.tx=state.user.tx;state.notifications=state.user.notifications;
 }
 function normalizeTx(rows){return rows.map(t=>{const credit=t.receiverId===state.user?.id;return {id:t.id,date:t.createdAt,title:credit?`Transfer from ${t.sender?.firstName||'User'} ${t.sender?.lastName||''}`:`Transfer to ${t.recipientName||'User'}`,amount:Number(t.amount),kind:credit?'credit':'debit',recipient:t.recipientAccount,note:t.narration,reference:t.reference,status:t.status}})}
@@ -146,13 +164,13 @@ async function app(){
     go('home');
     setTimeout(ensureFaceEnrollment,500);
   }catch(e){
-    const authFailure=e?.httpStatus===401||e?.apiCode==='INVALID_TOKEN'||e?.apiCode==='INVALID_REFRESH';
-    if(authFailure){
+    // Only the auth layer is allowed to sign the user out. A temporary
+    // dashboard/API error must not destroy the saved one-year session.
+    if(e?.apiCode==='INVALID_REFRESH' || e?.apiCode==='INVALID_TOKEN' || e?.httpStatus===401){
       clearTokens();
-      state={user:null,tx:[],notifications:[]};
-      authView('login',e.message||'Session expired. Please sign in again.');
+      authView('login','Your session has expired. Please sign in again.');
     }else{
-      root.innerHTML=`<div class="auth"><div class="authbox"><div class="authbrand"><div class="brandmark">V</div><div><b>Veyra</b><div class="muted">Secure internal payments</div></div></div><h1>Veyra could not load</h1><p class="muted">Your saved session was kept. This may be a temporary server or network problem.</p><div class="notice error">${esc(e?.message||'Could not load your account.')}</div><button class="btn primary" style="width:100%;margin-top:14px" onclick="app()">Retry</button><button class="btn soft" style="width:100%;margin-top:8px" onclick="clearTokens();state={user:null,tx:[],notifications:[]};authView('login')">Sign out</button></div></div>`;
+      authView('login',e?.message||'Veyra could not load your wallet. Please try again.');
     }
   }
 }
@@ -281,7 +299,7 @@ function brandAvatar(){const u=current(),b=document.querySelector('.brandmark');
 window.renderShell=function(){oldRenderShell();setTimeout(brandAvatar,0)};
 window.sendHtml=function(){return `<section class="page active" id="page-send"><h1 class="title">To Veyra</h1><p class="subtitle">Send money securely to another Veyra account.</p><div class="card"><div class="v-stepper"><div class="v-step active" id="st1"><div class="dot">1</div>Recipient</div><div class="v-step" id="st2"><div class="dot">2</div>Amount</div><div class="v-step" id="st3"><div class="dot">3</div>Confirm</div></div><div class="field"><label>Veyra account number</label><input id="recipientInput" inputmode="numeric" maxlength="10" placeholder="Enter 10-digit account number"><div id="recipientLookup"></div></div><div id="transferNext"></div></div></section>`};
 window.bindTransferWizard=function(){const input=document.getElementById('recipientInput');if(!input)return;input.oninput=async()=>{const q=input.value.replace(/\D/g,'').slice(0,10);input.value=q;const box=document.getElementById('recipientLookup');if(q.length<10){box.innerHTML='';return}box.innerHTML='<div class="notice">Checking Veyra account…</div>';try{const d=await api('/api/users/lookup?q='+encodeURIComponent(q));const r=d.recipient;window.__vRecipient=r;box.innerHTML=`<div class="lookup-card"><b>${esc(r.firstName+' '+r.lastName)}</b><div class="muted">${esc(r.accountNumber)}</div></div><div class="v-alias"><div class="field"><label>Recipient label (optional)</label><input id="recipientAlias" maxlength="24" placeholder="e.g. BB2"></div><button class="btn soft" style="margin-bottom:13px" onclick="transferStep2()">Continue</button></div>`}catch(e){box.innerHTML=`<div class="notice error">${esc(e.message||'Veyra account not found.')}</div>`}}};
-window.transferStep2=function(){const r=window.__vRecipient;if(!r)return;document.getElementById('st1').classList.add('done');document.getElementById('st1').classList.remove('active');document.getElementById('st2').classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};document.getElementById('transferNext').innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><div class="field"><label>SMS Sender ID</label><input id="vTransferSenderId" maxlength="30" value="VEYRA" placeholder="Approved Veyra Sender ID"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
+window.transferStep2=function(){const r=window.__vRecipient;if(!r)return;document.getElementById('st1').classList.add('done');document.getElementById('st1').classList.remove('active');document.getElementById('st2').classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};document.getElementById('transferNext').innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><div class="field"><label>SMS Sender ID</label><input id="vTransferSenderId" maxlength="30" autocomplete="off" value="VEYRA" placeholder="Enter approved Sender ID"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
 window.transferStep3=function(){const amount=Number(document.getElementById('vTransferAmount')?.value),note=(document.getElementById('vTransferNote')?.value||'').trim(),senderId=(document.getElementById('vTransferSenderId')?.value||'').trim();if(!amount||amount<=0)return alert('Enter a valid amount.');if(amount>current().balance)return alert('Insufficient balance.');if(!senderId)return alert('Enter an SMS Sender ID.');window.__vTransfer.amount=amount;window.__vTransfer.note=note;window.__vTransfer.senderId=senderId;document.getElementById('st2').classList.add('done');document.getElementById('st2').classList.remove('active');document.getElementById('st3').classList.add('active');const r=window.__vTransfer.recipient;document.getElementById('transferNext').innerHTML=`<div class="v-confirm"><div class="v-confirm-row"><span>Recipient</span><b>${esc(r.firstName+' '+r.lastName)}</b></div><div class="v-confirm-row"><span>Account</span><b>${esc(r.accountNumber)}</b></div><div class="v-confirm-row"><span>Amount</span><b>${money(amount)}</b></div><div class="v-confirm-row"><span>Recipient label</span><b>${esc(window.__vTransfer.alias||'None')}</b></div><div class="v-confirm-row"><span>SMS Sender ID</span><b>${esc(window.__vTransfer.senderId)}</b></div></div><div class="field"><label>Transaction PIN</label><input id="vTransferPin" class="v-pin" inputmode="numeric" maxlength="4" placeholder="••••"></div><button class="btn primary full" onclick="performVTransfer()">Send money</button>`};
 window.performVTransfer=async function(){const p=document.getElementById('vTransferPin')?.value.trim();if(!/^[0-9]{4}$/.test(p||''))return alert('PIN must be exactly 4 digits.');const t=window.__vTransfer;document.getElementById('transferNext').innerHTML='<div class="v-processing"><div class="v-spinner"></div><h3>Processing transfer</h3><p class="muted">Please wait while Veyra completes the transfer.</p></div>';try{await api('/api/transfers/internal',{method:'POST',headers:{'Idempotency-Key':uid()},body:JSON.stringify({recipientId:t.recipient.id,amount:t.amount,narration:t.note||undefined,pin:p,recipientAlias:t.alias||undefined,senderId:t.senderId||undefined})});await loadState();document.getElementById('st3').classList.add('done');document.getElementById('st3').classList.remove('active');document.getElementById('transferNext').innerHTML=`<div class="v-processing"><div class="successicon">✓</div><h3>Transfer successful</h3><p>${money(t.amount)} sent to ${esc(t.recipient.firstName+' '+t.recipient.lastName)}.</p><button class="btn primary full" onclick="go('home')">Done</button></div>`}catch(e){document.getElementById('transferNext').innerHTML=`<div class="notice error">${esc(e.message||'Transfer failed.')}</div><button class="btn outline full" onclick="go('send')">Try again</button>`}};
 const oldServiceModal=window.serviceModal;window.serviceModal=function(type){if(type==='Airtime')return airtimeUI();if(type==='Data')return dataUI();return oldServiceModal(type)};
