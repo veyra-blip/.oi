@@ -1,7 +1,14 @@
+import { createHash } from 'node:crypto';
 import { Prisma, TransactionStatus, TransactionType, NotificationType } from '@prisma/client';
 import { prisma } from './db.js';
 import { reference } from './utils.js';
 import { sendTermiiSms } from './sms.js';
+
+function requestHash(input: unknown): string {
+  return createHash('sha256')
+    .update(JSON.stringify(input))
+    .digest('hex');
+}
 
 function money(amount: Prisma.Decimal): string {
   return `₦${amount.toFixed(2)}`;
@@ -98,15 +105,43 @@ export async function internalTransfer(
   if (senderId === recipientId) throw new Error('SELF_TRANSFER');
 
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const existing = await tx.idempotencyKey.findUnique({ where: { key }, include: { transaction: true } });
-    if (existing) return { transaction: existing.transaction, created: false };
+    const requestFingerprint = requestHash({
+      senderId,
+      recipientId,
+      amount: amount.toFixed(2),
+      narration: narration || null
+    });
+
+    const existing = await tx.idempotencyKey.findUnique({
+      where: {
+        userId_key: {
+          userId: senderId,
+          key
+        }
+      }
+    });
+
+    if (existing) {
+      if (existing.requestHash !== requestFingerprint) {
+        throw new Error('IDEMPOTENCY_CONFLICT');
+      }
+
+      const existingTransaction = await tx.transaction.findUnique({
+        where: { id: existing.transactionId }
+      });
+
+      if (!existingTransaction) {
+        throw new Error('IDEMPOTENCY_TRANSACTION_NOT_FOUND');
+      }
+
+      return { transaction: existingTransaction, created: false };
+    }
 
     const sender = await tx.user.findUnique({ where: { id: senderId }, include: { wallet: true } });
     const receiver = await tx.user.findUnique({ where: { id: recipientId }, include: { wallet: true } });
 
     if (!sender || !receiver || !sender.wallet || !receiver.wallet) throw new Error('ACCOUNT_NOT_FOUND');
     if (sender.status !== 'ACTIVE' || receiver.status !== 'ACTIVE') throw new Error('ACCOUNT_NOT_ACTIVE');
-    if (sender.wallet.balance.lt(amount)) throw new Error('INSUFFICIENT_BALANCE');
 
     const ref = reference('INT');
     const txRecord = await tx.transaction.create({
@@ -120,8 +155,23 @@ export async function internalTransfer(
       }
     });
 
-    await tx.wallet.update({ where: { userId: senderId }, data: { balance: { decrement: amount } } });
-    await tx.wallet.update({ where: { userId: recipientId }, data: { balance: { increment: amount } } });
+    const debit = await tx.wallet.updateMany({
+      where: {
+        userId: senderId,
+        status: 'ACTIVE',
+        balance: { gte: amount }
+      },
+      data: { balance: { decrement: amount } }
+    });
+
+    if (debit.count !== 1) {
+      throw new Error('INSUFFICIENT_BALANCE');
+    }
+
+    await tx.wallet.update({
+      where: { userId: recipientId },
+      data: { balance: { increment: amount } }
+    });
 
     await tx.transactionEntry.createMany({
       data: [
@@ -142,8 +192,17 @@ export async function internalTransfer(
       ]
     });
 
-    await tx.idempotencyKey.create({ data: { key, userId: senderId, transactionId: completed.id } });
+    await tx.idempotencyKey.create({
+      data: {
+        key,
+        userId: senderId,
+        requestHash: requestFingerprint,
+        transactionId: completed.id
+      }
+    });
     return { transaction: completed, created: true };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable
   });
 
   if (result.created) {
