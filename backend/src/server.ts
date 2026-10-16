@@ -364,32 +364,36 @@ app.post("/api/transfers/external/simulate", requireAuth, moneyLimiter, asyncRou
     pin: z.string().regex(/^\d{4}$/)
   }).parse(req.body);
 
-  const existing = await tx.idempotencyKey.findUnique({
-  where: {
-    userId_key: {
-      userId: req.userId!,
-      key: requestKey
+  const user = await prisma.user.findUnique({ where: { id: req.userId }, include: { wallet: true } });
+  if (!user?.wallet) return res.status(404).json({ success: false, code: "WALLET_NOT_FOUND", message: "Wallet not found." });
+  try {
+    await verifyTransactionPin(req.userId, body.pin);
+  } catch (e: any) {
+    const code = e?.message || "INVALID_PIN";
+    return res.status(code === "PIN_LOCKED" ? 423 : code === "USER_NOT_FOUND" ? 404 : 401)
+      .json({ success: false, code, message: friendlyPinError(code) });
+  }
+
+  const amount = new Prisma.Decimal(body.amount.toFixed(2));
+  const requestKey = idempotencyKey(req);
+  if (!requestKey) return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED", message: "A transaction request key is required." });
+  const requestHash = hashRequest({ accountNumber: body.accountNumber, bankCode: body.bankCode, bankName: body.bankName, accountName: body.accountName, amount: amount.toFixed(2), narration: body.narration || null });
+
+  const transaction = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const existing = await tx.idempotencyKey.findUnique({
+      where: {
+        userId_key: {
+          userId: req.userId!,
+          key: requestKey
+        }
+      }
+    });
+    if (existing) {
+      if (existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
+      const existingTransaction = await tx.transaction.findUnique({ where: { id: existing.transactionId } });
+      if (!existingTransaction) throw new Error("IDEMPOTENCY_TRANSACTION_NOT_FOUND");
+      return existingTransaction;
     }
-  }
-});
-
-if (existing) {
-  if (existing.requestHash !== requestHash) {
-    throw new Error("IDEMPOTENCY_CONFLICT");
-  }
-
-  const existingTransaction = await tx.transaction.findUnique({
-    where: {
-      id: existing.transactionId
-    }
-  });
-
-  if (!existingTransaction) {
-    throw new Error("IDEMPOTENCY_TRANSACTION_NOT_FOUND");
-  }
-
-  return existingTransaction;
-}
     const created = await tx.transaction.create({
       data: {
         reference: reference("BANKSIM"),
@@ -469,10 +473,19 @@ app.post("/api/services/payment", requireAuth, moneyLimiter, asyncRoute(async (r
   if (!requestKey) return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED", message: "A transaction request key is required." });
   const requestHash = hashRequest({ type: body.type, target: body.target, amount: amount.toFixed(2) });
   const transaction = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const existing = await tx.idempotencyKey.findUnique({ where: { key: requestKey }, include: { transaction: true } });
+    const existing = await tx.idempotencyKey.findUnique({
+      where: {
+        userId_key: {
+          userId: req.userId!,
+          key: requestKey
+        }
+      }
+    });
     if (existing) {
-      if (existing.userId !== req.userId || existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
-      return existing.transaction;
+      if (existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
+      const existingTransaction = await tx.transaction.findUnique({ where: { id: existing.transactionId } });
+      if (!existingTransaction) throw new Error("IDEMPOTENCY_TRANSACTION_NOT_FOUND");
+      return existingTransaction;
     }
     const created = await tx.transaction.create({
       data: {
@@ -566,12 +579,13 @@ app.post("/api/savings/:id/deposit", requireAuth, moneyLimiter, asyncRoute(async
   if (!key) return res.status(400).json({success:false,code:"IDEMPOTENCY_KEY_REQUIRED",message:"A transaction request key is required."});
   try {
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const existing = await tx.idempotencyKey.findFirst({where:{key},include:{transaction:true}});
+      const requestHash = hashRequest({ savingsId: req.params.id, amount: amount.toFixed(2), direction: "deposit" });
+      const existing = await tx.idempotencyKey.findUnique({
+        where: { userId_key: { userId: req.userId!, key } }
+      });
       if (existing) {
-        if (existing.userId !== req.userId) throw new Error("IDEMPOTENCY_CONFLICT");
-        const existingSavingsId = String((existing.transaction.metadata as any)?.savingsAccountId || "");
-        if (existing.requestHash !== hashRequest({savingsId:req.params.id,amount:amount.toFixed(2),direction:"deposit"}) || existingSavingsId !== req.params.id) throw new Error("IDEMPOTENCY_CONFLICT");
-        return tx.savingsAccount.findUnique({where:{id:req.params.id}});
+        if (existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
+        return tx.savingsAccount.findUnique({ where: { id: req.params.id } });
       }
       const savings = await tx.savingsAccount.findFirst({where:{id:req.params.id,userId:req.userId,active:true}});
       if (!savings) throw new Error("SAVINGS_NOT_FOUND");
@@ -581,7 +595,7 @@ app.post("/api/savings/:id/deposit", requireAuth, moneyLimiter, asyncRoute(async
       const txr = await tx.transaction.create({data:{reference:reference("SAVE"),senderId:req.userId,type:"SAVINGS_DEPOSIT",status:"SUCCESS",amount,total:amount,completedAt:new Date(),metadata:{simulated:true,savingsAccountId:savings.id}}});
       await tx.transactionEntry.create({data:{transactionId:txr.id,userId:req.userId,type:"DEBIT",amount}});
       await tx.notification.create({data:{userId:req.userId,type:"SAVINGS",title:"Savings Deposit",message:`₦${amount.toFixed(2)} moved into ${savings.name}.`}});
-      await tx.idempotencyKey.create({data:{key,userId:req.userId,requestHash:hashRequest({savingsId:req.params.id,amount:amount.toFixed(2),direction:"deposit"}),transactionId:txr.id}});
+      await tx.idempotencyKey.create({ data: { key, userId: req.userId!, requestHash, transactionId: txr.id } });
       return updated;
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
     res.status(200).json({success:true,savings:result});
@@ -596,10 +610,13 @@ app.post("/api/savings/:id/withdraw", requireAuth, moneyLimiter, asyncRoute(asyn
   if (!key) return res.status(400).json({success:false,code:"IDEMPOTENCY_KEY_REQUIRED",message:"A transaction request key is required."});
   try {
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const existing = await tx.idempotencyKey.findFirst({where:{key},include:{transaction:true}});
+      const requestHash = hashRequest({ savingsId: req.params.id, amount: amount.toFixed(2), direction: "withdraw" });
+      const existing = await tx.idempotencyKey.findUnique({
+        where: { userId_key: { userId: req.userId!, key } }
+      });
       if (existing) {
-        if (existing.userId !== req.userId || existing.requestHash !== hashRequest({savingsId:req.params.id,amount:amount.toFixed(2),direction:"withdraw"})) throw new Error("IDEMPOTENCY_CONFLICT");
-        return tx.savingsAccount.findUnique({where:{id:req.params.id}});
+        if (existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
+        return tx.savingsAccount.findUnique({ where: { id: req.params.id } });
       }
       const savings = await tx.savingsAccount.findFirst({where:{id:req.params.id,userId:req.userId,active:true}});
       if (!savings) throw new Error("SAVINGS_NOT_FOUND");
@@ -609,7 +626,7 @@ app.post("/api/savings/:id/withdraw", requireAuth, moneyLimiter, asyncRoute(asyn
       const txr = await tx.transaction.create({data:{reference:reference("SAVW"),senderId:req.userId,type:"SAVINGS_WITHDRAWAL",status:"SUCCESS",amount,total:amount,completedAt:new Date(),metadata:{simulated:true,savingsAccountId:savings.id}}});
       await tx.transactionEntry.create({data:{transactionId:txr.id,userId:req.userId,type:"CREDIT",amount}});
       await tx.notification.create({data:{userId:req.userId,type:"SAVINGS",title:"Savings Withdrawal",message:`₦${amount.toFixed(2)} withdrawn from ${savings.name}.`}});
-      await tx.idempotencyKey.create({data:{key,userId:req.userId,requestHash:hashRequest({savingsId:req.params.id,amount:amount.toFixed(2),direction:"withdraw"}),transactionId:txr.id}});
+      await tx.idempotencyKey.create({ data: { key, userId: req.userId!, requestHash, transactionId: txr.id } });
       return tx.savingsAccount.findUnique({where:{id:savings.id}});
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
     res.status(200).json({success:true,savings:result});
@@ -743,7 +760,8 @@ function friendlyError(code: string) {
     SELF_TRANSFER: "You cannot transfer money to yourself.",
     ACCOUNT_NOT_FOUND: "Sender or recipient account was not found.",
     ACCOUNT_NOT_ACTIVE: "One of the accounts is not active.",
-    INSUFFICIENT_BALANCE: "Insufficient wallet balance."
+    INSUFFICIENT_BALANCE: "Insufficient wallet balance.",
+    IDEMPOTENCY_TRANSACTION_NOT_FOUND: "The previous transaction record could not be found."
   };
   return map[code] || "The transaction could not be completed.";
 }
