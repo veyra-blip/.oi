@@ -67,8 +67,7 @@ model Transaction {
   narration         String?
   recipientName     String?
   recipientAccount  String?
-  // SQLite / Prisma connector does not support Json.
-  // Store JSON-serialized string instead.
+  // Store JSON-serialized metadata as String to support SQLite and all connectors
   metadata          String?
   createdAt         DateTime @default(now())
   completedAt       DateTime?
