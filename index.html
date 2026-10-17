@@ -1,53 +1,86 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#00b96b">
-<title>Internal Wallet</title>
-<style>
-:root{--green:#00b96b;--green2:#00d982;--dark:#07130e;--bg:#f5f7f6;--card:#fff;--text:#101814;--muted:#718078;--line:#e6ece8;--danger:#e5484d;--amber:#d88b00;--shadow:0 14px 40px rgba(8,28,18,.08);}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}button,input,select,textarea{font-family:inherit}
-@media(max-width:1000px){.grid4{grid-template-columns:repeat(2,1fr)}.layout{grid-template-columns:1fr}.side{display:none}.mobile-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:var(--card)}}
-@media(max-width:650px){.grid4,.grid3,.grid2{grid-template-columns:1fr 1fr}.balance{font-size:31px}.hero{padding:20px}.card{padding:16px}.grid3 .card:last-child{grid-column:span 2}.top-actions .hi{display:none}}
-</style>
-<style>
-/* VEYRA OPay-style mobile layer */
-:root{--vbg:#171817;--vpanel:#242725;--vg:#18d39a;--vmuted:#9ea8a3;--vline:#393c3a}
-body{background:var(--vbg)!important;color:#f4f7f5}.topbar{background:#101312!important;border-bottom:1px solid #292c2a}.brand{color:#fff}.brandmark{background:var(--vg)!important;color:#073628!important}
-@media(max-width:520px){.v-opay-grid{gap:4px}.v-opay-action .ico{width:48px;height:48px}.v-opay-action span{font-size:10px}}
-</style>
-<style>
-body{font-family:"Inter","Avenir Next","SF Pro Display",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:-.01em}
-.main{max-width:760px!important;padding:18px 14px 96px!important}
-.home-head{display:flex;align-items:center;justify-content:space-between;margin:4px 2px 14px}
-.home-identity{display:flex;align-items:center;gap:11px;cursor:pointer}.home-photo{width:48px!important;height:48px!important;font-size:18px!important}.home-name{font-weight:850;font-size:17px}.ho
-</style>
-<style id="veyra-ui-fix">
-/* Adjusted: prefer the Veyra dark palette by default and avoid forceful !important light overrides.
-   This preserves the original selectors but removes hard-coded light colors so existing dark CSS can apply.
-*/
-body{font-family:Inter,Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--vbg);color:#f4f7f5}
-.brand-photo{width:34px;height:34px;border-radius:11px;object-fit:cover;display:block}
-.home-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 0 15px}
-.home-identity{display:flex;align-items:center;gap:11px;cursor:pointer}
-.home-photo{width:48px;height:48px;font-size:18px}
-.home-name{font-weight:850;font-size:17px}
-</style></head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#00b96b">
+  <title>Internal Wallet — Login</title>
+  <style>
+    :root{--bg:#090b0a;--panel:#101312;--accent:#00d084;--muted:#9aa19a;--text:#f4f7f5}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
+    .card{width:100%;max-width:420px;background:var(--panel);border-radius:18px;padding:28px;border:1px solid rgba(255,255,255,0.04);box-shadow:0 10px 30px rgba(0,0,0,0.6)}
+    .brand{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+    .brand-mark{width:48px;height:48px;border-radius:12px;background:var(--accent);display:grid;place-items:center;color:#01220f;font-weight:800}
+    h1{margin:0;font-size:20px;letter-spacing:-0.01em}
+    p.sub{margin:6px 0 18px;color:var(--muted);font-size:13px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);background:#0d0f0e;color:var(--text);outline:none}
+    .actions{margin-top:16px}
+    button.primary{width:100%;padding:12px;border-radius:10px;border:0;background:var(--accent);color:#01130b;font-weight:800;cursor:pointer}
+    .muted{margin-top:12px;color:var(--muted);font-size:13px;text-align:center}
+    .error{margin-top:12px;padding:10px;border-radius:8px;background:rgba(229,72,77,0.08);color:#f8b6b8;font-size:13px}
+    @media (max-width:480px){.card{padding:18px;border-radius:14px}}
+    noscript{display:block;margin-top:12px;color:#ffcc00;background:#332b00;padding:8px;border-radius:8px}
+  </style>
+</head>
 <body>
-<div id="root"></div>
-<script>
-'use strict';
+  <div class="wrap">
+    <div class="card" role="main">
+      <div class="brand">
+        <div class="brand-mark">W</div>
+        <div>
+          <h1>Internal Wallet</h1>
+          <p class="sub">Sign in to your internal wallet</p>
+        </div>
+      </div>
 
-/*
-  VEYRA shared-wallet frontend
-  IMPORTANT: set API_BASE to the public URL where backend/src/server.ts is deployed.
-  Example: https://your-veyra-api.example.com
-*/
-const API_BASE = 'https://veyra-api-etnq.onrender.com';
-const TOKEN_KEY='veyra_access_token';
-const REFRESH_KEY='veyra_refresh_token';
-const money=n=>'₦'+Number(n||0).toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2});
-const uid=()=>crypto.randomUUID?crypto.randomUUID():'id-'+Date.now()+'-'+Math.random().toString(36).slice(2);
-const now=()=>new Date().toISOString();
-const esc=s=>String(s??'').replace(/[&<>\
+      <form id="loginForm" autocomplete="on">
+        <div>
+          <label for="identifier">Phone or email</label>
+          <input id="identifier" name="identifier" type="text" inputmode="tel" value="08000000001" required />
+        </div>
+        <div style="margin-top:12px">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" value="DemoPass123!" required />
+        </div>
+        <div class="actions">
+          <button class="primary" type="submit">Sign in</button>
+        </div>
+        <div id="error" class="error" style="display:none"></div>
+        <div class="muted">This is a static fallback page. For the full app, visit the project repository or run the frontend build.</div>
+      </form>
+
+      <noscript>Please enable JavaScript to use this site.</noscript>
+    </div>
+  </div>
+
+  <script>
+    // Lightweight client-side handler so page is usable even without the original React bundle.
+    (function(){
+      const form = document.getElementById('loginForm');
+      const err = document.getElementById('error');
+      function showError(msg){ err.textContent = msg; err.style.display = 'block'; }
+      function hideError(){ err.style.display = 'none'; err.textContent = ''; }
+
+      form.addEventListener('submit', function(e){
+        e.preventDefault(); hideError();
+        const id = document.getElementById('identifier').value.trim();
+        const pw = document.getElementById('password').value;
+        if(!id || !pw){ showError('Enter both phone/email and password.'); return; }
+
+        // Demo behaviour: store a fake token and show success. In the real app the API login should be used.
+        try{
+          const token = 'demo-token-' + Math.random().toString(36).slice(2);
+          localStorage.setItem('veyra_access_token', token);
+          localStorage.setItem('veyra_refresh_token', token + '-r');
+          // Show a quick success state then redirect to the app root (if available)
+          document.querySelector('.actions').innerHTML = '<button class="primary" disabled>Signed in</button>';
+          setTimeout(()=>{ window.location.href = '/'; }, 700);
+        }catch(ex){ showError('Could not complete sign in.'); }
+      });
+    }());
+  </script>
+</body>
+</html>
