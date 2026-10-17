@@ -67,11 +67,58 @@ async function api(path,options={},retry=true){
   }
   clearTimeout(timeout);
   if(r.status===401&&retry&&localStorage.getItem(REFRESH_KEY)){
-    try{
-      const rr=await fetch(apiUrl('/api/auth/refresh'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refreshToken:localStorage.getItem(REFRESH_KEY)}),cache:'no-store'});
-      if(rr.ok){const d=await rr.json();setTokens(d.accessToken,d.refreshToken);return api(path,options,false)}
-    }catch{}
-    clearTokens();state={user:null,tx:[],notifications:[]};authView('login');throw new Error('Session expired. Please sign in again.');
+  try{
+    const rr=await fetch(apiUrl('/api/auth/refresh'),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        refreshToken:localStorage.getItem(REFRESH_KEY)
+      })
+    });
+
+    const d=await rr.json().catch(()=>({}));
+
+    if(rr.ok&&d.accessToken){
+      setTokens(
+        d.accessToken,
+        d.refreshToken || localStorage.getItem(REFRESH_KEY)
+      );
+
+      return api(path,options,false);
+    }
+
+    // Only remove the saved session when the refresh
+    // token itself has actually become invalid.
+    if(
+      rr.status===401 &&
+      (
+        d.code==='INVALID_REFRESH' ||
+        d.code==='INVALID_TOKEN'
+      )
+    ){
+      clearTokens();
+      state={user:null,tx:[],notifications:[]};
+      authView('login');
+      throw new Error('Your session has expired. Please sign in again.');
+    }
+
+    throw new Error(
+      d.message || 'The server could not refresh your session.'
+    );
+
+  }catch(e){
+    // Do NOT erase the refresh token for a network,
+    // Render cold-start, 500, 502, 503, or other temporary error.
+    if(
+      e.message==='Your session has expired. Please sign in again.'
+    ){
+      throw e;
+    }
+
+    throw new Error(
+      e.message || 'The server is temporarily unavailable. Please try again.'
+    );
+  }
   }
   let data={};try{data=await r.json()}catch{}
   if(!r.ok){const e=new Error(data.message||data.code||('Request failed ('+r.status+')'));e.httpStatus=r.status;e.apiCode=data.code;throw e}
