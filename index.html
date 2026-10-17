@@ -143,11 +143,56 @@ function authView(mode='login',notice=''){
 function msg(t,err=false){const x=document.getElementById('authmsg');if(x)x.innerHTML=`<div class="notice ${err?'error':''}">${esc(t)}</div>`}
 function splitName(name){const p=String(name||'').trim().split(/\s+/);return {firstName:p.shift()||'User',lastName:p.join(' ')||'User'}}
 async function register(f){
-  const name=String(f.get('name')).trim(), n=splitName(name);
+  const name = String(f.get('name')).trim();
+  const n = splitName(name);
+
   try{
-    const d=await api('/api/auth/register',{method:'POST',body:JSON.stringify({firstName:n.firstName,lastName:n.lastName,username:String(f.get('username')).trim().toLowerCase(),phone:String(f.get('phone')).trim(),email:String(f.get('email')).trim().toLowerCase(),password:String(f.get('password')),pin:String(f.get('pin')),nin:String(f.get('nin')||'').trim()})},false);
-    setTokens(d.accessToken,d.refreshToken);await app();
-  }catch(e){msg(e.message,true)}
+    const payload = {
+      firstName: n.firstName,
+      lastName: n.lastName,
+      username: String(f.get('username')).trim().toLowerCase(),
+      phone: String(f.get('phone')).trim(),
+      email: String(f.get('email')).trim().toLowerCase(),
+      password: String(f.get('password')),
+      pin: String(f.get('pin')),
+      nin: String(f.get('nin') || '').trim()
+    };
+
+    console.log('REGISTER PAYLOAD:', {
+      ...payload,
+      password: '[HIDDEN]',
+      pin: '[HIDDEN]',
+      nin: '[HIDDEN]'
+    });
+
+    const d = await api('/api/auth/register',{
+      method:'POST',
+      body:JSON.stringify(payload)
+    },false);
+
+    console.log('REGISTER SUCCESS:', d);
+
+    setTokens(d.accessToken,d.refreshToken);
+
+    console.log(
+      'ACCESS TOKEN:',
+      !!localStorage.getItem(TOKEN_KEY)
+    );
+
+    console.log(
+      'REFRESH TOKEN:',
+      !!localStorage.getItem(REFRESH_KEY)
+    );
+
+    await app();
+
+  }catch(e){
+    console.error('REGISTER ERROR:', e);
+    console.error('HTTP STATUS:', e?.httpStatus);
+    console.error('API CODE:', e?.apiCode);
+
+    msg(e.message,true);
+  }
 }
 async function login(f){
   try{
