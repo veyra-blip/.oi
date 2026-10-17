@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from "express";
+import { Request, Response, NextFunction, RequestHandler } from "express";
 import { verifyAccess } from "./auth.js";
 import { prisma } from "./db.js";
 
@@ -41,7 +41,12 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
-export function asyncRoute(fn: Function) {
-  return (req: Request, res: Response, next: NextFunction) =>
-    Promise.resolve(fn(req, res, next)).catch(next);
+export function asyncRoute(fn: RequestHandler): RequestHandler {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
+export function idempotencyKey(req: Request): string | null {
+  const key = (req.headers["idempotency-key"] || req.headers["Idempotency-Key"] || null) as string | null;
+  if (!key) return null;
+  return String(key);
 }

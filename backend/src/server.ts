@@ -138,8 +138,28 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
 }));
 
 app.get("/api/transactions", requireAuth, asyncRoute(async (req: any, res: any) => {
-  const rows = await prisma.transaction.findMany({ where: { OR: [{ senderId: req.userId }, { receiverId: req.userId }] }, orderBy: { createdAt: "desc" }, take: 100 });
-  res.json({ success: true, transactions: rows });
+  const rows = await prisma.transaction.findMany({
+    where: { OR: [{ senderId: req.userId }, { receiverId: req.userId }] },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    include: {
+      sender: { select: { firstName: true, lastName: true, accountNumber: true } },
+      receiver: { select: { firstName: true, lastName: true, accountNumber: true } }
+    }
+  });
+
+  // Parse metadata strings back into objects for clients
+  const parsed = rows.map((r: any) => {
+    let meta = null;
+    try {
+      if (typeof r.metadata === "string" && r.metadata.length) meta = JSON.parse(r.metadata);
+    } catch {
+      meta = null;
+    }
+    return { ...r, metadata: meta };
+  });
+
+  res.json({ success: true, transactions: parsed });
 }));
 
 // Paystack integration (account name lookup)
