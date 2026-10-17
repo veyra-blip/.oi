@@ -151,9 +151,30 @@ async function register(f){
 }
 async function login(f){
   try{
-    const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify({identifier:String(f.get('identity')).trim(),password:String(f.get('password'))})},false);
-    setTokens(d.accessToken,d.refreshToken);await app();
-  }catch(e){msg(e.message,true)}
+    const d=await api('/api/auth/login',{
+      method:'POST',
+      body:JSON.stringify({
+        identifier:String(f.get('identity')).trim(),
+        password:String(f.get('password'))
+      })
+    },false);
+
+    console.log('LOGIN SUCCESS:', d);
+
+    setTokens(d.accessToken,d.refreshToken);
+
+    console.log('ACCESS TOKEN:', !!localStorage.getItem(TOKEN_KEY));
+    console.log('REFRESH TOKEN:', !!localStorage.getItem(REFRESH_KEY));
+
+    await app();
+
+  }catch(e){
+    console.error('LOGIN ERROR:', e);
+    console.error('HTTP STATUS:', e?.httpStatus);
+    console.error('API CODE:', e?.apiCode);
+
+    msg(e.message,true);
+  }
 }
 function forgot(){
   openModal(`<div class="modalhead"><h2>Recover your account</h2><button class="close" onclick="closeModal()">×</button></div>
