@@ -23,3 +23,10 @@ export function verifyRefresh(token: string) {
 export function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
+
+export function hashRequest(value: unknown) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(value))
+    .digest("hex");
+}
