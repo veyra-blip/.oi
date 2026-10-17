@@ -1,35 +1,27 @@
 {
-  "name": "internal-wallet-backend",
-  "private": true,
-  "type": "module",
+  "name": "veyra-backend",
+  "version": "1.0.0",
+  "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "seed": "tsx prisma/seed.ts",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "test": "tsx --test tests/**/*.test.ts",
-    "prisma:deploy": "prisma migrate deploy"
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts"
   },
   "dependencies": {
-    "@prisma/client": "^6.16.0",
-    "argon2": "^0.44.0",
+    "@prisma/client": "^5.0.0",
+    "argon2": "^0.30.0",
+    "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
-    "dotenv": "^17.2.2",
-    "express": "^5.1.0",
-    "express-rate-limit": "^8.1.0",
-    "helmet": "^8.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "zod": "^4.1.5"
+    "dotenv": "^16.0.0",
+    "express": "^4.18.2",
+    "express-rate-limit": "^6.7.0",
+    "helmet": "^6.0.1",
+    "jsonwebtoken": "^9.0.0",
+    "zod": "^3.0.0"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.3",
-    "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^24.3.1",
-    "prisma": "^6.16.0",
-    "tsx": "^4.19.3",
-    "typescript": "^5.9.2"
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.0.0",
+    "prisma": "^5.0.0"
   }
 }
