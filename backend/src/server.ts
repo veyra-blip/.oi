@@ -96,7 +96,7 @@ app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any
   const access = signAccess(user.id);
   const refresh = signRefresh(user.id);
   await prisma.session.create({
-    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 365 * 86400000) }
+    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 90 * 86400000) }
   });
 
   res.status(201).json({ success: true, accessToken: access, refreshToken: refresh });
@@ -123,7 +123,7 @@ app.post("/api/auth/login", authLimiter, asyncRoute(async (req: any, res: any) =
   const access = signAccess(user.id);
   const refresh = signRefresh(user.id);
   await prisma.session.create({
-    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 365 * 86400000) }
+    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 90 * 86400000) }
   });
 
   res.json({ success: true, accessToken: access, refreshToken: refresh });
@@ -226,10 +226,7 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
       idempotencyKey(req),
       body.senderId
     );
-    res.json({
-  success: true,
-  transaction: result
-});
+    res.json({ success: true, transaction: result.transaction });
   } catch (e: any) {
     const code = e.message || "TRANSFER_FAILED";
     const status = code === "INSUFFICIENT_BALANCE" ? 400 : code === "IDEMPOTENCY_KEY_REQUIRED" || code === "INVALID_AMOUNT" ? 400 : code === "IDEMPOTENCY_CONFLICT" ? 409 : 409;
@@ -530,7 +527,7 @@ app.post("/api/security/password", requireAuth, authLimiter, asyncRoute(async (r
   await prisma.session.deleteMany({ where: { userId: req.userId } });
   const access = signAccess(req.userId);
   const refresh = signRefresh(req.userId);
-  await prisma.session.create({ data: { userId: req.userId, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 365 * 86400000) } });
+  await prisma.session.create({ data: { userId: req.userId, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 90 * 86400000) } });
   res.json({ success: true, accessToken: access, refreshToken: refresh, message: "Password updated successfully." });
 }));
 

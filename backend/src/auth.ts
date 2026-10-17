@@ -1,15 +1,23 @@
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
 
-const jwtSecret = process.env.JWT_SECRET || "dev-secret";
-const refreshSecret = process.env.REFRESH_SECRET || "dev-refresh-secret";
+function requiredSecret(name: string) {
+  const value = process.env[name]?.trim();
+  if (!value || value.length < 32) {
+    throw new Error(`${name}_NOT_CONFIGURED_OR_TOO_SHORT`);
+  }
+  return value;
+}
+
+const jwtSecret = requiredSecret("JWT_SECRET");
+const refreshSecret = requiredSecret("REFRESH_SECRET");
 
 export function signAccess(userId: string) {
   return jwt.sign({ sub: userId }, jwtSecret, { expiresIn: "15m" });
 }
 
 export function signRefresh(userId: string) {
-  return jwt.sign({ sub: userId, jti: crypto.randomUUID() }, refreshSecret, { expiresIn: "365d" });
+  return jwt.sign({ sub: userId, jti: crypto.randomUUID() }, refreshSecret, { expiresIn: "90d" });
 }
 
 export function verifyAccess(token: string) {
@@ -22,11 +30,4 @@ export function verifyRefresh(token: string) {
 
 export function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
-}
-
-export function hashRequest(value: unknown) {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(value))
-    .digest("hex");
 }
