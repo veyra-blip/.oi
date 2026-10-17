@@ -1,67 +1,50 @@
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
 
-function requiredSecret(name: string) {
-  const value = process.env[name]?.trim();
+const JWT_SECRET = process.env.JWT_SECRET || "";
+const REFRESH_SECRET = process.env.REFRESH_SECRET || "";
 
-  if (!value || value.length < 32) {
-    throw new Error(`${name}_NOT_CONFIGURED_OR_TOO_SHORT`);
-  }
-
-  return value;
-}
-
-const jwtSecret = requiredSecret("JWT_SECRET");
-const refreshSecret = requiredSecret("REFRESH_SECRET");
-
-// Access token: short-lived.
-// The refresh token keeps the user signed in when the website is reopened.
 export function signAccess(userId: string) {
-  return jwt.sign(
-    { sub: userId },
-    jwtSecret,
-    { expiresIn: "15m" }
-  );
-}
-
-// Refresh token: 2 years.
-// This allows the user to remain signed in for up to two years
-// without entering their username/password again, unless the
-// refresh token is revoked, expires, or the account is locked.
-export function signRefresh(userId: string) {
-  return jwt.sign(
-    {
-      sub: userId,
-      jti: crypto.randomUUID()
-    },
-    refreshSecret,
-    { expiresIn: "2y" }
-  );
+  return jwt.sign({ sub: userId }, JWT_SECRET, { expiresIn: "15m" });
 }
 
 export function verifyAccess(token: string) {
-  return jwt.verify(token, jwtSecret) as {
-    sub: string;
-  };
+  try {
+    return jwt.verify(token, JWT_SECRET) as any;
+  } catch {
+    return null;
+  }
+}
+
+export function signRefresh(userId: string) {
+  // create opaque refresh token (not a JWT)
+  return crypto.randomBytes(48).toString("hex");
 }
 
 export function verifyRefresh(token: string) {
-  return jwt.verify(token, refreshSecret) as {
-    sub: string;
-    jti: string;
-  };
+  // For this implementation we don't embed userId in the token itself.
+  // Server verifies refresh token by hashing and checking the sessions table.
+  return { sub: token };
 }
 
 export function hashToken(token: string) {
-  return crypto
-    .createHash("sha256")
-    .update(token)
-    .digest("hex");
+  return crypto.createHmac("sha256", REFRESH_SECRET || "fallback").update(token).digest("hex");
 }
 
-export function hashRequest(value: unknown) {
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(value))
-    .digest("hex");
+export function hashRequest(obj: any) {
+  // deterministic JSON then HMAC
+  const str = JSON.stringify(canonicalize(obj));
+  return crypto.createHmac("sha256", REFRESH_SECRET || "fallback").update(str).digest("hex");
+}
+
+// canonicalize object keys recursively
+function canonicalize(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(canonicalize);
+  if (obj && typeof obj === "object") {
+    const keys = Object.keys(obj).sort();
+    const out: any = {};
+    for (const k of keys) out[k] = canonicalize(obj[k]);
+    return out;
+  }
+  return obj;
 }
