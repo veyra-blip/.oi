@@ -1,48 +1,22 @@
-VEYRA COMPLETE FIXED BUILD
+VEYRA 90-DAY PERSISTENT LOGIN FIX
 
-frontend/veyra-index.html
-- Single working frontend file.
-- Registration creates an account, logs the user in, loads the wallet and opens the dashboard.
-- Login accepts username, email or phone.
-- Friendly connection errors only. No raw GitHub/Render error text is shown in the app.
-- Forgot password works with a one-time reset code for this simulation.
-- Face enrollment captures a reduced camera template and sends only the template to the backend.
-- Face recovery compares a new camera template with the encrypted saved template.
-- NightGuard uses the same face verification.
-- Transfers, history, notifications, services, savings, cards, loans and security settings use backend endpoints.
-- Beneficiaries work per account in the browser.
+What changed:
+1. Refresh JWT lifetime: 90 days.
+2. Database session lifetime: 90 days.
+3. Frontend now stores the NEW refreshToken returned by /api/auth/refresh.
+4. Username/email/phone login remains supported by the corrected server.
+5. The frontend never stores the user's password. It stores only access/refresh session tokens.
+6. Explicit Sign out still removes the saved session.
 
-backend/
-- Express + Prisma + PostgreSQL.
-- Registration and login.
-- Shared isolated wallets.
-- Atomic internal transfers with idempotency.
-- Password reset.
-- Encrypted face-template storage and matching.
-- Password/PIN change.
-- Savings deposit/withdraw.
-- Virtual cards.
-- Loan request/repayment.
-- Simulated service payments.
-- CORS configured for the frontend.
+Render environment variables required:
+JWT_SECRET=<at least 32 random characters>
+REFRESH_SECRET=<at least 32 different random characters>
 
-RENDER
-Root Directory: backend
-Build Command:
-npm install && npx prisma generate && npm run build && npx prisma db push
-Start Command:
+Build:
+npm install && npx prisma generate && npm run build && npx prisma migrate deploy
+
+Start:
 npm start
 
-Environment variables:
-DATABASE_URL=<your Render PostgreSQL internal URL>
-JWT_SECRET=<long random secret>
-REFRESH_SECRET=<different long random secret>
-FACE_ENCRYPTION_KEY=<long random secret>
-FRONTEND_ORIGINS=*
-RESET_DELIVERY_MODE=display
-FACE_MATCH_THRESHOLD=0.32
-
-After deployment, the API health endpoint should return JSON from /api/health.
-
-IMPORTANT PRIVACY NOTE
-The face feature stores an encrypted reduced template rather than the raw camera photo. The matching method in this simulation is an app-level template comparison. It is not real biometric KYC, liveness detection, or government identity verification and should not be used for real banking.
+Important:
+After deploying this version, an old refresh token from the previous configuration may be invalid. If the app still shows a stale login state, sign in once again. After that, the new refresh token is retained across reloads and refreshes for up to 90 days.
