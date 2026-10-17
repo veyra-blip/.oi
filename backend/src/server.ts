@@ -94,10 +94,19 @@ app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any
   });
 
   const access = signAccess(user.id);
-  const refresh = signRefresh(user.id);
-  await prisma.session.create({
-    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 90 * 86400000) }
-  });
+const refresh = signRefresh(user.id);
+
+const expiresAt = new Date(
+  Date.now() + 2 * 365 * 24 * 60 * 60 * 1000
+);
+
+await prisma.session.create({
+  data: {
+    userId: user.id,
+    refreshHash: hashToken(refresh),
+    expiresAt
+  }
+});
 
   res.status(201).json({ success: true, accessToken: access, refreshToken: refresh });
 }));
@@ -121,10 +130,19 @@ app.post("/api/auth/login", authLimiter, asyncRoute(async (req: any, res: any) =
   }
 
   const access = signAccess(user.id);
-  const refresh = signRefresh(user.id);
-  await prisma.session.create({
-    data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 90 * 86400000) }
-  });
+const refresh = signRefresh(user.id);
+
+const expiresAt = new Date(
+  Date.now() + 2 * 365 * 24 * 60 * 60 * 1000
+);
+
+await prisma.session.create({
+  data: {
+    userId: user.id,
+    refreshHash: hashToken(refresh),
+    expiresAt
+  }
+});
 
   res.json({ success: true, accessToken: access, refreshToken: refresh });
 }));
