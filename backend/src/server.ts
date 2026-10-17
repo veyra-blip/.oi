@@ -226,7 +226,10 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
       idempotencyKey(req),
       body.senderId
     );
-    res.json({ success: true, transaction: result.transaction });
+res.json({
+  success: true,
+  transaction: result
+});
   } catch (e: any) {
     const code = e.message || "TRANSFER_FAILED";
     const status = code === "INSUFFICIENT_BALANCE" ? 400 : code === "IDEMPOTENCY_KEY_REQUIRED" || code === "INVALID_AMOUNT" ? 400 : code === "IDEMPOTENCY_CONFLICT" ? 409 : 409;
