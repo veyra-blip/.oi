@@ -1,0 +1,241 @@
+name: Apply fix: Prisma metadata -> String & serialize metadata
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Create branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="fix/prisma-metadata"
+          git checkout -b "$BRANCH"
+
+      - name: Write updated prisma schema
+        run: |
+          mkdir -p backend/prisma
+          cat > backend/prisma/schema.prisma <<'PRISMA'
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  firstName     String
+  lastName      String
+  username      String   @unique
+  phone         String   @unique
+  email         String   @unique
+  passwordHash  String
+  pinHash       String
+  accountNumber String   @unique
+  status        String   @default("ACTIVE")
+  wallet        Wallet?
+  notifications Notification[]
+  sessions      Session[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Wallet {
+  id      String   @id @default(cuid())
+  userId  String   @unique
+  balance Decimal  @default(0)
+  status  String   @default("ACTIVE")
+  user    User     @relation(fields: [userId], references: [id])
+}
+
+model Session {
+  id                String   @id @default(cuid())
+  userId            String
+  refreshHash       String
+  previousRefreshHash String?
+  revokedAt         DateTime?
+  expiresAt         DateTime
+  user              User     @relation(fields: [userId], references: [id])
+  createdAt         DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Transaction {
+  id                String   @id @default(cuid())
+  reference         String   @unique
+  senderId          String?
+  receiverId        String?
+  type              String
+  status            String
+  amount            Decimal
+  total             Decimal
+  narration         String?
+  recipientName     String?
+  recipientAccount  String?
+  // Store JSON-serialized metadata as String to support SQLite
+  metadata          String?
+  createdAt         DateTime @default(now())
+  completedAt       DateTime?
+}
+PRISMA
+
+      - name: Write updated transactionService.ts
+        run: |
+          mkdir -p backend/src
+          cat > backend/src/transactionService.ts <<'TS'
+import { prisma } from "./db.js";
+import { Prisma } from "@prisma/client";
+
+export async function internalTransfer(
+  senderId: string,
+  recipientId: string,
+  amount: Prisma.Decimal,
+  narration: string | undefined,
+  idempotency: string | null,
+  senderReference?: string,
+  metadata?: any
+) {
+  if (senderId === recipientId) throw new Error("SELF_TRANSFER");
+
+  return await prisma.$transaction(
+    async (tx) => {
+      const sender = await tx.user.findUnique({ where: { id: senderId }, include: { wallet: true } });
+      const recipient = await tx.user.findUnique({ where: { id: recipientId }, include: { wallet: true } });
+      if (!sender || !recipient) throw new Error("ACCOUNT_NOT_FOUND");
+      const sWallet = await tx.wallet.findUnique({ where: { userId: senderId } });
+      if (!sWallet) throw new Error("WALLET_NOT_FOUND");
+      if (sWallet.balance.lt(amount)) throw new Error("INSUFFICIENT_BALANCE");
+
+      const updated = await tx.wallet.updateMany({
+        where: { userId: senderId, status: "ACTIVE", balance: { gte: amount } },
+        data: { balance: { decrement: amount } }
+      });
+      if (updated.count === 0) throw new Error("INSUFFICIENT_BALANCE");
+
+      await tx.wallet.update({ where: { userId: recipientId }, data: { balance: { increment: amount } } });
+
+      const txr = await tx.transaction.create({
+        data: {
+          reference: `INT_${Date.now().toString(36)}`,
+          senderId,
+          receiverId: recipientId,
+          type: "INTERNAL_TRANSFER",
+          status: "SUCCESS",
+          amount,
+          total: amount,
+          narration,
+          metadata: metadata ? JSON.stringify(metadata) : null
+        }
+      });
+      return txr;
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+  );
+}
+TS
+
+      - name: Write updated server.ts (transactions parsing)
+        run: |
+          mkdir -p backend/src
+          cat > backend/src/server.ts <<'TS'
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import cookieParser from "cookie-parser";
+import { prisma } from "./db.js";
+import { asyncRoute, requireAuth } from "./middleware.js";
+
+const app = express();
+app.use(helmet());
+const FRONTEND = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+app.use(cors({ origin: FRONTEND, credentials: true }));
+app.use(cookieParser());
+app.use(express.json({ limit: "100kb" }));
+
+app.get("/api/transactions", requireAuth, asyncRoute(async (req: any, res: any) => {
+  const rows = await prisma.transaction.findMany({
+    where: { OR: [{ senderId: req.userId }, { receiverId: req.userId }] },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    include: {
+      sender: { select: { firstName: true, lastName: true, accountNumber: true } },
+      receiver: { select: { firstName: true, lastName: true, accountNumber: true } }
+    }
+  });
+
+  const parsed = rows.map((r: any) => {
+    let meta = null;
+    try {
+      if (typeof r.metadata === "string" && r.metadata.length > 0) {
+        meta = JSON.parse(r.metadata);
+      }
+    } catch {
+      meta = null;
+    }
+    return { ...r, metadata: meta };
+  });
+
+  res.json({ success: true, transactions: parsed });
+}));
+
+app.listen(process.env.PORT || 4000);
+TS
+
+      - name: Stage, commit and push branch
+        env:
+          BRANCH: fix-prisma-metadata
+        run: |
+          git add -A
+          git commit -m "Fix: Prisma metadata -> String; serialize metadata on write and parse on read" || echo "No changes to commit"
+          git push --set-upstream origin "$BRANCH"
+
+      - name: Create Pull Request
+        env:
+          REPO: ${{ github.repository }}
+          BRANCH: fix-prisma-metadata
+          BASE: main
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_TITLE="Fix: Prisma metadata -> String; serialize/parse metadata"
+          PR_BODY="This automated PR updates Transaction.metadata to String (to support SQLite) and serializes metadata on write and parses on read. Review before merging."
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO/pulls \
+            -d "$(jq -nc --arg t "$PR_TITLE" --arg b "$PR_BODY" --arg head "$BRANCH" --arg base "$BASE" '{title:$t, body:$b, head:$head, base:$base}')")
+          if [ "$RESPONSE" -ne 201 ]; then
+            echo "PR creation returned status $RESPONSE. You may need to manually create a PR from branch $BRANCH."
+          else
+            echo "Pull request created successfully."
+          fi
