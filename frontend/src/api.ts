@@ -1,4 +1,4 @@
-const API = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
+const API = (import.meta.env.VITE_API_URL as string) || "/api";
 
 let accessToken = sessionStorage.getItem("accessToken") || "";
 
@@ -8,18 +8,53 @@ export function setAccessToken(token: string) {
   else sessionStorage.removeItem("accessToken");
 }
 
-export function getAccessToken() {
-  return accessToken;
+async function refreshAccessToken(): Promise<string> {
+  const res = await fetch(`${API}/auth/refresh`, {
+    method: "POST",
+    credentials: "include"
+  });
+
+  if (!res.ok) throw new Error("Refresh failed");
+
+  const data = await res.json().catch(() => ({}));
+  if (!data.accessToken) throw new Error("No access token returned");
+
+  setAccessToken(data.accessToken);
+  return data.accessToken;
 }
 
-async function request(path: string, options: RequestInit = {}) {
-  const headers = new Headers(options.headers);
+async function request(path: string, options: RequestInit = {}, retry = true): Promise<any> {
+  const headers = new Headers(options.headers || {});
   headers.set("Content-Type", "application/json");
+
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
 
-  const res = await fetch(`${API}${path}`, { ...options, headers });
-  const data = await res.json().catch(() => ({}));
+  const res = await fetch(`${API}${path}`, {
+    ...options,
+    headers,
+    credentials: "include"
+  });
 
+  if (res.status === 401 && retry) {
+    try {
+      const nextToken = await refreshAccessToken();
+      headers.set("Authorization", `Bearer ${nextToken}`);
+
+      const retryRes = await fetch(`${API}${path}`, {
+        ...options,
+        headers,
+        credentials: "include"
+      });
+
+      const retryData = await retryRes.json().catch(() => ({}));
+      if (!retryRes.ok) throw new Error(retryData.message || "Request failed");
+      return retryData;
+    } catch {
+      throw new Error("Unauthenticated");
+    }
+  }
+
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.message || "Request failed");
   return data;
 }
@@ -27,29 +62,16 @@ async function request(path: string, options: RequestInit = {}) {
 export const api = {
   login: (identifier: string, password: string) =>
     request("/auth/login", { method: "POST", body: JSON.stringify({ identifier, password }) }),
-  register: (body: any) =>
-    request("/auth/register", { method: "POST", body: JSON.stringify(body) }),
+  register: (body: any) => request("/auth/register", { method: "POST", body: JSON.stringify(body) }),
   me: () => request("/me"),
   logout: () => request("/auth/logout", { method: "POST" }),
-  lookup: (q: string) => request(`/users/lookup?q=${encodeURIComponent(q)}`),
-  transfer: (body: any) =>
-    request("/transfers/internal", {
-      method: "POST",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-      body: JSON.stringify(body)
-    }),
+  usersLookup: (q: string) => request(`/users/lookup?q=${encodeURIComponent(q)}`),
+  internalTransfer: (body: any) => request("/transfers/internal", { method: "POST", body: JSON.stringify(body) }),
+  externalSimulate: (body: any) => request("/transfers/external/simulate", { method: "POST", body: JSON.stringify(body) }),
   transactions: () => request("/transactions"),
   notifications: () => request("/notifications"),
-  readNotifications: () => request("/notifications/read-all", { method: "POST" }),
   banks: () => request("/banks"),
-  bankLookup: (bankCode: string, accountNumber: string) =>
-    request(`/banks/lookup?bankCode=${encodeURIComponent(bankCode)}&accountNumber=${encodeURIComponent(accountNumber)}`),
-  payment: (body: any) =>
-    request("/services/payment", { method: "POST", body: JSON.stringify(body) }),
-  savings: () => request("/savings"),
-  createSavings: (body: any) => request("/savings", { method: "POST", body: JSON.stringify(body) }),
-  cards: () => request("/cards"),
-  freezeCard: (id: string) => request(`/cards/${id}/freeze`, { method: "POST" }),
-  loans: () => request("/loans"),
-  applyLoan: (body: any) => request("/loans", { method: "POST", body: JSON.stringify(body) })
+  payment: (body: any) => request("/services/payment", { method: "POST", body: JSON.stringify(body) }),
+  banksLookup: (bankCode: string, accountNumber: string) =>
+    request(`/banks/lookup?bankCode=${encodeURIComponent(bankCode)}&accountNumber=${encodeURIComponent(accountNumber)}`)
 };
