@@ -187,13 +187,27 @@ async function register(f){
     await app();
 
   }catch(e){
-    console.error('REGISTER ERROR:', e);
-    console.error('HTTP STATUS:', e?.httpStatus);
-    console.error('API CODE:', e?.apiCode);
+  const details = [
+    'REGISTER FAILED',
+    `Message: ${e?.message || 'No message'}`,
+    `HTTP: ${e?.httpStatus ?? 'unknown'}`,
+    `Code: ${e?.apiCode ?? 'unknown'}`
+  ].join('\n');
 
-    msg(e.message,true);
+  console.error(details, e);
+
+  const box = document.getElementById('authmsg');
+
+  if(box){
+    box.innerHTML = `
+      <div class="notice error" style="white-space:pre-wrap">
+        ${esc(details)}
+      </div>
+    `;
+  } else {
+    alert(details);
   }
-}
+  }
 async function login(f){
   try{
     const d=await api('/api/auth/login',{
