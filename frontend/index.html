@@ -215,7 +215,7 @@ async function app(){
     // Temporary dashboard/API failures must not force a logout.
     if(e?.apiCode==='INVALID_REFRESH' || e?.apiCode==='INVALID_TOKEN' || e?.httpStatus===401){
       clearTokens();
-      authView('login','Your 90-day session has expired. Please sign in again.');
+      authView('login','Your session has expired. Please sign in again.');
     }else{
       authView('login',e?.message||'Veyra could not load your wallet. Please try again.');
     }
