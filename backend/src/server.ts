@@ -423,6 +423,158 @@ app.post("/api/auth/login", async (req, res) => {
     });
   }
 });
+/* =========================================================
+   OWNER BOOTSTRAP
+========================================================= */
+
+app.post("/api/auth/owner-bootstrap", async (req, res) => {
+  try {
+    const setupKey = req.headers["x-owner-setup-key"];
+
+    if (
+      typeof setupKey !== "string" ||
+      setupKey !== process.env.OWNER_SETUP_KEY
+    ) {
+      return res.status(401).json({
+        error: "INVALID_OWNER_SETUP_KEY",
+      });
+    }
+
+    const existingOwner = await prisma.user.findFirst({
+      where: {
+        role: "OWNER",
+      },
+    });
+
+    if (existingOwner) {
+      return res.status(409).json({
+        error: "OWNER_ALREADY_EXISTS",
+        message:
+          "The Veyra owner account has already been created.",
+      });
+    }
+
+    const email = "admin@veyra.test";
+    const phone = "08147263851";
+    const username = "veyraowner";
+    const firstName = "Veyra";
+    const lastName = "Owner";
+    const password = "VeyraOwner@2026!X9";
+
+    const passwordHash = hashPassword(password);
+
+    let accountNumber = generateAccountNumber();
+
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const existingAccount =
+        await prisma.account.findUnique({
+          where: {
+            accountNumber,
+          },
+        });
+
+      if (!existingAccount) {
+        break;
+      }
+
+      accountNumber = generateAccountNumber();
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          email,
+          phone,
+          passwordHash,
+          role: "OWNER",
+          status: "ACTIVE",
+        },
+      });
+
+      await tx.profile.create({
+        data: {
+          userId: user.id,
+          username,
+          firstName,
+          lastName,
+          showUsername: true,
+          allowPhoneReceiving: true,
+          emailNotifications: true,
+          loginAlerts: true,
+        },
+      });
+
+      await tx.identity.create({
+        data: {
+          userId: user.id,
+          status: "UNVERIFIED",
+        },
+      });
+
+      const account = await tx.account.create({
+        data: {
+          userId: user.id,
+          accountNumber,
+          balanceKobo: BigInt(0),
+          currency: "NGN",
+          level: "LEVEL_1",
+        },
+      });
+
+      return {
+        user,
+        account,
+      };
+    });
+
+    const accessToken = createAccessToken(
+      result.user.id,
+      result.user.role
+    );
+
+    const refreshToken = createRefreshToken();
+
+    await prisma.session.create({
+      data: {
+        userId: result.user.id,
+        tokenHash: hashToken(refreshToken),
+        expiresAt: new Date(
+          Date.now() + 30 * 24 * 60 * 60 * 1000
+        ),
+      },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      message: "Veyra owner account created successfully.",
+      credentials: {
+        email,
+        phone,
+        username,
+        password,
+      },
+      user: {
+        id: result.user.id,
+        role: result.user.role,
+        status: result.user.status,
+      },
+      account: {
+        accountNumber: result.account.accountNumber,
+        balanceKobo: "0",
+        currency: result.account.currency,
+        level: result.account.level,
+      },
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("Owner bootstrap failed:", error);
+
+    return res.status(500).json({
+      error: "OWNER_BOOTSTRAP_FAILED",
+    });
+  }
+});
 
 /* =========================================================
    FALLBACK
