@@ -108,7 +108,7 @@ async function requireAuth(
     }
 
     const token = header.slice(7);
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET!);
 
     if (
       typeof decoded === "string" ||
