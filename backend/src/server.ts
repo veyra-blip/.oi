@@ -84,6 +84,71 @@ function hashToken(token: string): string {
     .update(token)
     .digest("hex");
 }
+type AuthRequest = express.Request & {
+  authUser?: {
+    id: string;
+    role: string;
+  };
+};
+
+async function requireAuth(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  try {
+    const authReq = req as AuthRequest;
+    const header = req.headers.authorization;
+
+    if (!header?.startsWith("Bearer ")) {
+      return res.status(401).json({
+        ok: false,
+        message: "Please log in first."
+      });
+    }
+
+    const token = header.slice(7);
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    if (
+      typeof decoded === "string" ||
+      typeof decoded.sub !== "string"
+    ) {
+      return res.status(401).json({
+        ok: false,
+        message: "Invalid access token."
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.sub },
+      select: {
+        id: true,
+        role: true,
+        status: true
+      }
+    });
+
+    if (!user || user.status !== "ACTIVE") {
+      return res.status(401).json({
+        ok: false,
+        message: "Account is unavailable."
+      });
+    }
+
+    authReq.authUser = {
+      id: user.id,
+      role: user.role
+    };
+
+    next();
+  } catch {
+    return res.status(401).json({
+      ok: false,
+      message: "Access token is invalid or expired."
+    });
+  }
+}
 
 function generateAccountNumber(): string {
   const digits = Math.floor(
@@ -423,6 +488,95 @@ app.post("/api/auth/login", async (req, res) => {
     });
   }
 });
+app.post(
+  "/api/auth/change-password",
+  requireAuth,
+  async (req, res) => {
+    const authReq = req as AuthRequest;
+    const userId = authReq.authUser!.id;
+
+    const { currentPassword, newPassword } = req.body;
+
+    if (
+      typeof currentPassword !== "string" ||
+      typeof newPassword !== "string" ||
+      newPassword.length < 12
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Enter your current password and a new password of at least 12 characters."
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (
+      !user ||
+      !verifyPassword(currentPassword, user.passwordHash)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        message: "Current password is incorrect."
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        ok: false,
+        message: "Choose a different password."
+      });
+    }
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash: hashPassword(newPassword)
+        }
+      }),
+      prisma.session.updateMany({
+        where: {
+          userId,
+          revokedAt: null
+        },
+        data: {
+          revokedAt: new Date()
+        }
+      })
+    ]);
+
+    return res.json({
+      ok: true,
+      message: "Password changed. Please log in again."
+    });
+  }
+);
+
+app.post(
+  "/api/auth/logout-all",
+  requireAuth,
+  async (req, res) => {
+    const authReq = req as AuthRequest;
+
+    await prisma.session.updateMany({
+      where: {
+        userId: authReq.authUser!.id,
+        revokedAt: null
+      },
+      data: {
+        revokedAt: new Date()
+      }
+    });
+
+    return res.json({
+      ok: true,
+      message: "All refresh sessions have been revoked. Log in again."
+    });
+  }
+);
+
 /* =========================================================
    OWNER BOOTSTRAP
 ========================================================= */
