@@ -1,19 +1,212 @@
-generator client { provider = "prisma-client-js" }
-datasource db { provider = "postgresql" url = env("DATABASE_URL") }
-enum UserRole { USER OWNER ADMIN }
-enum UserStatus { ACTIVE SUSPENDED LOCKED }
-enum TransactionStatus { CREATED AUTHENTICATING PROCESSING SUCCESS FAILED REVERSED CANCELLED }
-enum TransactionType { INTERNAL_TRANSFER BANK_TRANSFER AIRTIME DATA ELECTRICITY TV INTERNET WATER EDUCATION SAVINGS LOAN CARD }
-enum UpgradeLevel { LEVEL_1 LEVEL_2 LEVEL_3 BUSINESS }
-model User { id String @id @default(cuid()) email String @unique phone String @unique passwordHash String role UserRole @default(USER) status UserStatus @default(ACTIVE) createdAt DateTime @default(now()) updatedAt DateTime @updatedAt profile Profile? identity Identity? account Account? sessions Session[] devices Device[] transactions Transaction[] @relation("ActorTransactions") notifications Notification[] upgrades Upgrade[] auditLogs AuditLog[] }
-model Profile { id String @id @default(cuid()) userId String @unique username String @unique firstName String lastName String profileImageUrl? String showUsername Boolean @default(true) allowPhoneReceiving Boolean @default(true) emailNotifications Boolean @default(true) loginAlerts Boolean @default(true) user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model Identity { id String @id @default(cuid()) userId String @unique verifiedFirstName String? verifiedMiddleName String? verifiedLastName String? provider String? providerSubjectId String? status String @default("UNVERIFIED") verifiedAt DateTime? version Int @default(1) user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model Account { id String @id @default(cuid()) userId String @unique accountNumber String @unique balanceKobo BigInt @default(0) level UpgradeLevel @default(LEVEL_1) currency String @default("NGN") user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model Session { id String @id @default(cuid()) userId String tokenHash String @unique expiresAt DateTime revokedAt DateTime? createdAt DateTime @default(now()) user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model Device { id String @id @default(cuid()) userId String deviceName String? platform String? deviceKeyId String? trusted Boolean @default(false) lastSeenAt DateTime @default(now()) user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model Transaction { id String @id @default(cuid()) reference String @unique userId String type TransactionType status TransactionStatus @default(CREATED) amountKobo BigInt currency String @default("NGN") recipientNameSnapshot String? recipientAccountSnapshot String? recipientBankSnapshot String? disclosure String? providerReference String? idempotencyKey String? @unique createdAt DateTime @default(now()) updatedAt DateTime @updatedAt completedAt DateTime? user User @relation("ActorTransactions",fields:[userId],references:[id]) events TransactionEvent[] receipt Receipt? }
-model TransactionEvent { id String @id @default(cuid()) transactionId String status TransactionStatus message String? createdAt DateTime @default(now()) transaction Transaction @relation(fields:[transactionId],references:[id],onDelete:Cascade) }
-model Receipt { id String @id @default(cuid()) transactionId String @unique dataJson Json createdAt DateTime @default(now()) transaction Transaction @relation(fields:[transactionId],references:[id],onDelete:Cascade) }
-model Notification { id String @id @default(cuid()) userId String channel String title String body String status String @default("QUEUED") createdAt DateTime @default(now()) user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model Upgrade { id String @id @default(cuid()) userId String level UpgradeLevel status String @default("PENDING") submittedAt DateTime @default(now()) reviewedAt DateTime? user User @relation(fields:[userId],references:[id],onDelete:Cascade) }
-model AuditLog { id String @id @default(cuid()) userId String? action String metadata Json? createdAt DateTime @default(now()) user User? @relation(fields:[userId],references:[id],onDelete:SetNull) }
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  OWNER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  LOCKED
+}
+
+enum TransactionStatus {
+  CREATED
+  AUTHENTICATING
+  PROCESSING
+  SUCCESS
+  FAILED
+  REVERSED
+  CANCELLED
+}
+
+enum TransactionType {
+  INTERNAL_TRANSFER
+  BANK_TRANSFER
+  AIRTIME
+  DATA
+  ELECTRICITY
+  TV
+  INTERNET
+  WATER
+  EDUCATION
+  SAVINGS
+  LOAN
+  CARD
+}
+
+enum UpgradeLevel {
+  LEVEL_1
+  LEVEL_2
+  LEVEL_3
+  BUSINESS
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  phone        String     @unique
+  passwordHash String
+  role         UserRole   @default(USER)
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  profile       Profile?
+  identity      Identity?
+  account       Account?
+  sessions      Session[]
+  devices       Device[]
+  transactions  Transaction[] @relation("ActorTransactions")
+  notifications Notification[]
+  upgrades      Upgrade[]
+  auditLogs     AuditLog[]
+}
+
+model Profile {
+  id                   String  @id @default(cuid())
+  userId               String  @unique
+  username             String  @unique
+  firstName            String
+  lastName             String
+  profileImageUrl      String?
+  showUsername         Boolean @default(true)
+  allowPhoneReceiving  Boolean @default(true)
+  emailNotifications   Boolean @default(true)
+  loginAlerts          Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Identity {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  verifiedFirstName   String?
+  verifiedMiddleName  String?
+  verifiedLastName    String?
+  provider            String?
+  providerSubjectId   String?
+  status              String    @default("UNVERIFIED")
+  verifiedAt          DateTime?
+  version             Int       @default(1)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id            String       @id @default(cuid())
+  userId        String       @unique
+  accountNumber String       @unique
+  balanceKobo   BigInt       @default(0)
+  level         UpgradeLevel @default(LEVEL_1)
+  currency      String       @default("NGN")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Device {
+  id         String   @id @default(cuid())
+  userId     String
+  deviceName String?
+  platform   String?
+  deviceKeyId String?
+  trusted    Boolean  @default(false)
+  lastSeenAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Transaction {
+  id                       String            @id @default(cuid())
+  reference                String            @unique
+  userId                   String
+  type                     TransactionType
+  status                   TransactionStatus @default(CREATED)
+  amountKobo               BigInt
+  currency                 String            @default("NGN")
+  recipientNameSnapshot    String?
+  recipientAccountSnapshot String?
+  recipientBankSnapshot    String?
+  disclosure               String?
+  providerReference        String?
+  idempotencyKey           String?           @unique
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  completedAt              DateTime?
+
+  user    User              @relation("ActorTransactions", fields: [userId], references: [id])
+  events  TransactionEvent[]
+  receipt Receipt?
+}
+
+model TransactionEvent {
+  id            String            @id @default(cuid())
+  transactionId String
+  status        TransactionStatus
+  message       String?
+  createdAt     DateTime          @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+}
+
+model Receipt {
+  id            String      @id @default(cuid())
+  transactionId String      @unique
+  dataJson      Json
+  createdAt     DateTime    @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  channel   String
+  title     String
+  body      String
+  status    String   @default("QUEUED")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Upgrade {
+  id          String       @id @default(cuid())
+  userId      String
+  level       UpgradeLevel
+  status      String       @default("PENDING")
+  submittedAt DateTime     @default(now())
+  reviewedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
