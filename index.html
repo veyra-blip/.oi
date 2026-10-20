@@ -69,9 +69,21 @@ async function api(path,options={},retry=true){
   if(r.status===401&&retry&&localStorage.getItem(REFRESH_KEY)){
     try{
       const rr=await fetch(apiUrl('/api/auth/refresh'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({refreshToken:localStorage.getItem(REFRESH_KEY)}),cache:'no-store'});
-      if(rr.ok){const d=await rr.json();setTokens(d.accessToken,d.refreshToken);return api(path,options,false)}
+      if(rr.ok){
+        const d=await rr.json();
+        if(d?.accessToken&&d?.refreshToken){
+          setTokens(d.accessToken,d.refreshToken);
+          return api(path,options,false);
+        }
+      }
     }catch{}
-    clearTokens();state={user:null,tx:[],notifications:[]};authView('login');throw new Error('Session expired. Please sign in again.');
+    clearTokens();
+    state={user:null,tx:[],notifications:[]};
+    authView('login','Your saved session has expired. Please sign in again.');
+    const err=new Error('Session expired. Please sign in again.');
+    err.apiCode='INVALID_REFRESH';
+    err.httpStatus=401;
+    throw err;
   }
   let data={};try{data=await r.json()}catch{}
   if(!r.ok){const e=new Error(data.message||data.code||('Request failed ('+r.status+')'));e.httpStatus=r.status;e.apiCode=data.code;throw e}
@@ -99,14 +111,18 @@ async function register(f){
   const name=String(f.get('name')).trim(), n=splitName(name);
   try{
     const d=await api('/api/auth/register',{method:'POST',body:JSON.stringify({firstName:n.firstName,lastName:n.lastName,username:String(f.get('username')).trim().toLowerCase(),phone:String(f.get('phone')).trim(),email:String(f.get('email')).trim().toLowerCase(),password:String(f.get('password')),pin:String(f.get('pin')),nin:String(f.get('nin')||'').trim()})},false);
-    setTokens(d.accessToken,d.refreshToken);await app();
-  }catch(e){msg(e.message,true)}
+    if(!d?.accessToken||!d?.refreshToken)throw new Error('Veyra returned an incomplete sign-up session. Please try again.');
+    setTokens(d.accessToken,d.refreshToken);
+    await app();
+  }catch(e){msg(e.message||'Something went wrong. Please try again.',true)}
 }
 async function login(f){
   try{
     const d=await api('/api/auth/login',{method:'POST',body:JSON.stringify({identifier:String(f.get('identity')).trim(),password:String(f.get('password'))})},false);
-    setTokens(d.accessToken,d.refreshToken);await app();
-  }catch(e){msg(e.message,true)}
+    if(!d?.accessToken||!d?.refreshToken)throw new Error('Veyra returned an incomplete login session. Please try again.');
+    setTokens(d.accessToken,d.refreshToken);
+    await app();
+  }catch(e){msg(e.message||'Something went wrong. Please try again.',true)}
 }
 function forgot(){
   openModal(`<div class="modalhead"><h2>Recover your account</h2><button class="close" onclick="closeModal()">×</button></div>
@@ -165,7 +181,7 @@ async function app(){
     setTimeout(ensureFaceEnrollment,500);
   }catch(e){
     // Only the auth layer is allowed to sign the user out. A temporary
-    // dashboard/API error must not destroy the saved one-year session.
+    // dashboard/API error must not destroy the saved long-term session.
     if(e?.apiCode==='INVALID_REFRESH' || e?.apiCode==='INVALID_TOKEN' || e?.httpStatus===401){
       clearTokens();
       authView('login','Your session has expired. Please sign in again.');
