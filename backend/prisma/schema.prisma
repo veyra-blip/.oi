@@ -19,8 +19,10 @@ enum UserRole {
   OWNER
 }
 
+
 enum TransactionStatus {
-  PENDING
+  CREATED
+  AUTHENTICATING
   PROCESSING
   SUCCESS
   FAILED
@@ -38,12 +40,11 @@ enum TransactionType {
   INTERNET
   WATER
   EDUCATION
-  SAVINGS_DEPOSIT
-  SAVINGS_WITHDRAWAL
-  LOAN_DISBURSEMENT
-  LOAN_REPAYMENT
+  SAVINGS
+  LOAN
   CARD
 }
+
 
 enum EntryType {
   DEBIT
@@ -83,50 +84,36 @@ enum NotificationType {
   SYSTEM
 }
 
+
 model User {
-  id              String           @id @default(cuid())
-  firstName       String
-  lastName        String
-  username        String           @unique
-  phone           String           @unique
-  email           String           @unique
-  passwordHash    String
-  pinHash         String
-  accountNumber   String           @unique
-  status          UserStatus       @default(ACTIVE)
-  role            UserRole         @default(USER)
-  pinFailures     Int              @default(0)
-  pinLockedUntil  DateTime?
-  ninLast4        String?
-  identityStatus  String           @default("UNVERIFIED")
-  faceVerificationStatus String     @default("NOT_CONFIGURED")
-  upgradeLevel    String           @default("BASIC")
-  showUsername    Boolean          @default(true)
-  allowPhoneReceiving Boolean       @default(true)
-  emailNotifications Boolean        @default(true)
-  loginAlerts     Boolean           @default(true)
-  profileImageUrl String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  wallet          Wallet?
-  profile         Profile?
-  identity        Identity?
-  account         Account?
-  devices         Device[]
-  transactionEvents TransactionEvent[] @relation("TransactionEventActor")
-  receipts        Receipt[]
-  upgrades        Upgrade[]
-  auditLogs       AuditLog[] @relation("AuditActor")
-  webAuthnChallenges WebAuthnChallenge[]
-  sentTransactions Transaction[]   @relation("sender")
+  id                   String     @id @default(cuid())
+  email                String     @unique
+  phone                String     @unique
+  passwordHash         String
+  role                 UserRole   @default(USER)
+  status               UserStatus @default(ACTIVE)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  wallet               Wallet?
+  profile              Profile?
+  identity             Identity?
+  account              Account?
+  devices              Device[]
+  transactionEvents    TransactionEvent[] @relation("TransactionEventActor")
+  receipts             Receipt[]
+  upgrades             Upgrade[]
+  auditLogs            AuditLog[] @relation("AuditActor")
+  webAuthnChallenges   WebAuthnChallenge[]
+  sentTransactions     Transaction[] @relation("sender")
   receivedTransactions Transaction[] @relation("receiver")
-  notifications   Notification[]
-  sessions        Session[]
-  securityEvents  SecurityEvent[]
-  savings         SavingsAccount[]
-  cards           Card[]
-  loans           Loan[]
-  upgradeRequests UpgradeRequest[]
+  notifications        Notification[]
+  sessions             Session[]
+  securityEvents       SecurityEvent[]
+  savings              SavingsAccount[]
+  cards                Card[]
+  loans                Loan[]
+  upgradeRequests      UpgradeRequest[]
 }
 
 model Wallet {
@@ -304,52 +291,46 @@ model UpgradeRequest {
 
 // New normalized Veyra architecture. Legacy Wallet remains during the compatibility
 // period; every balance-changing path must update Wallet and Account atomically.
+
 model Profile {
-  id                String   @id @default(cuid())
-  userId            String   @unique
-  legalFirstName    String
-  legalLastName     String
-  displayName       String?
-  username          String   @unique
-  phone             String   @unique
-  email             String   @unique
-  avatarUrl         String?
-  preferences       Json?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                  String  @id @default(cuid())
+  userId              String  @unique
+  username            String  @unique
+  firstName           String
+  lastName            String
+  profileImageUrl     String?
+  showUsername        Boolean @default(true)
+  allowPhoneReceiving Boolean @default(true)
+  emailNotifications  Boolean @default(true)
+  loginAlerts         Boolean @default(true)
+
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Identity {
-  id                    String   @id @default(cuid())
-  userId                String   @unique
-  status                String   @default("UNVERIFIED")
-  ninLast4              String?
-  ninProvider           String?
-  ninProviderReference  String?
-  ninVerifiedAt         DateTime?
-  faceStatus            String   @default("NOT_CONFIGURED")
-  faceProvider          String?
-  faceProviderReference String?
-  faceVerifiedAt        DateTime?
-  lockedLegalName       String?
-  lastFailureCode       String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  verifiedFirstName  String?
+  verifiedMiddleName String?
+  verifiedLastName   String?
+  provider           String?
+  providerSubjectId  String?
+  status             String
+  verifiedAt         DateTime?
+  version            Int
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Account {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  accountNumber String   @unique
-  currency      String   @default("NGN")
-  balanceKobo   BigInt   @default(0)
-  status        String   @default("ACTIVE")
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  @@index([status, updatedAt])
+  id            String       @id @default(cuid())
+  userId        String       @unique
+  accountNumber String       @unique
+  balanceKobo   BigInt
+  level         UpgradeLevel
+  currency      String
+
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Device {
@@ -428,6 +409,13 @@ model Upgrade {
   reviewNote     String?
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId, status, requestedAt])
+}
+
+enum UpgradeLevel {
+  LEVEL_1
+  LEVEL_2
+  LEVEL_3
+  BUSINESS
 }
 
 model AuditLog {
