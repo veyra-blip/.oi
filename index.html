@@ -4,62 +4,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Veyra Diagnostic</title>
+  <meta name="theme-color" content="#171717">
+  <meta name="description" content="Veyra. A more considered way to manage your money.">
+  <title>Veyra</title>
   <link rel="stylesheet" href="styles.css">
-  <style>
-    #diagnostic {
-      position: fixed;
-      z-index: 99999;
-      top: 10px;
-      left: 10px;
-      right: 10px;
-      padding: 16px;
-      background: #fff4d6;
-      color: #222;
-      border: 2px solid #c99b42;
-      border-radius: 10px;
-      font: 14px/1.5 monospace;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-  </style>
 </head>
 <body>
-  <div id="diagnostic">Veyra diagnostic: HTML loaded. Checking JavaScript...</div>
   <div id="app"></div>
-
-  <script>
-    const diagnostic = document.getElementById("diagnostic");
-
-    window.addEventListener("error", function (event) {
-      diagnostic.textContent =
-        "JAVASCRIPT ERROR:\n" +
-        (event.message || "Unknown error") +
-        "\nFile: " + (event.filename || "unknown") +
-        "\nLine: " + (event.lineno || "unknown");
-    });
-
-    window.addEventListener("unhandledrejection", function (event) {
-      diagnostic.textContent =
-        "PROMISE ERROR:\n" +
-        String(event.reason);
-    });
-
-    window.addEventListener("load", function () {
-      setTimeout(function () {
-        if (diagnostic.textContent.startsWith("Veyra diagnostic:")) {
-          const app = document.getElementById("app");
-          diagnostic.textContent =
-            "JavaScript file loaded.\n" +
-            "Content inside app: " +
-            (app.innerHTML.length > 0 ? "YES" : "NO") +
-            "\nApp HTML length: " + app.innerHTML.length +
-            "\nIf the screen is still white, report this message.";
-        }
-      }, 1500);
-    });
-  </script>
-
   <script src="app.js"></script>
 </body>
 </html>
