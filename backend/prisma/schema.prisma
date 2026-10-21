@@ -133,7 +133,7 @@ model Transaction {
   senderId        String?
   receiverId      String?
   type            TransactionType
-  status          TransactionStatus @default(PENDING)
+  status TransactionStatus @default(CREATED)
   amount          Decimal           @db.Decimal(18,2)
   fee             Decimal           @default(0) @db.Decimal(18,2)
   vat             Decimal           @default(0) @db.Decimal(18,2)
