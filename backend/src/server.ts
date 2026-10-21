@@ -61,6 +61,25 @@ requireSecret("JWT_SECRET");
 requireSecret("REFRESH_SECRET");
 
 app.get("/api/health", (_req, res) => res.json({ success: true, service: "internal-wallet" }));
+app.get("/health/db", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+
+    return res.status(200).json({
+      success: true,
+      service: "Veyra API",
+      database: "connected"
+    });
+  } catch (error) {
+    console.error("Database health check failed:", error);
+
+    return res.status(503).json({
+      success: false,
+      service: "Veyra API",
+      database: "disconnected"
+    });
+  }
+});
 
 app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any) => {
   const body = z.object({
