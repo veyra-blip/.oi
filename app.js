@@ -8,16 +8,31 @@
 const API_BASE = "https://veyra-api-etnq.onrender.com";
 const app = document.getElementById("app");
 
+
+function readSavedSession() {
+  try {
+    const saved = localStorage.getItem("veyra_session");
+    return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+}
+
+const savedSession = readSavedSession();
+
 const state = {
-  screen: "welcome",
+  screen: savedSession?.accessToken && savedSession?.user
+    ? "home"
+    : "welcome",
   history: [],
-  user: null,
-  account: null,
-  accessToken: sessionStorage.getItem("veyra_access_token") || null,
+  user: savedSession?.user || null,
+  account: savedSession?.account || null,
+  accessToken: savedSession?.accessToken || null,
   busy: false,
   error: "",
   notice: ""
 };
+
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
@@ -572,8 +587,12 @@ function saveAuthenticatedSession(data) {
 
   // Temporary session storage for this website phase.
   // This is not a substitute for a secure production session design.
-  sessionStorage.setItem("veyra_access_token", data.accessToken);
-
+  localStorage.setItem("veyra_session", JSON.stringify({
+  accessToken: data.accessToken,
+  user: data.user,
+  account: data.account || null
+}));
+   
   state.history = [];
   state.screen = "home";
   state.error = "";
@@ -711,9 +730,5 @@ app.addEventListener("click", event => {
 // The existing backend does not yet expose a verified refresh-session
 // or current-account endpoint. Do not restore an old token as if it
 // proved a valid login after the page is reloaded.
-if (state.accessToken) {
-  sessionStorage.removeItem("veyra_access_token");
-  state.accessToken = null;
-}
 
 render();
