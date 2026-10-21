@@ -1063,7 +1063,25 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
       const created = await tx.transaction.create({ data:{ reference:reference("BANK"), senderId:req.userId, type:"BANK_TRANSFER", status:providerMode === "LIVE" ? "PROCESSING" : "SUCCESS", amount, fee:0, vat:0, total:amount, narration:body.narration, recipientName:verifiedName, recipientAccount:body.accountNumber, recipientBank:resolvedBankName, completedAt:providerMode === "LIVE" ? null : new Date(), metadata:{countryCode:body.countryCode,currency:body.currency,bankCode:body.bankCode||null,providerMode,bankCreditRecorded:Boolean(mirrorBankAccount),simulated:providerMode !== "LIVE"} } });
       await tx.transactionEntry.create({ data:{transactionId:created.id,userId:req.userId,type:"DEBIT",amount} });
       await tx.transactionEvent.create({ data:{transactionId:created.id,actorUserId:req.userId,eventType:"BANK_TRANSFER_SUBMITTED",fromStatus:"CREATED",toStatus:created.status,provider:providerMode === "LIVE" ? "PAYSTACK" : "SIMULATED",eventKey:`bank:${created.reference}:created`,metadata:{simulated:providerMode !== "LIVE"}} });
-      await tx.receipt.create({ data:{userId:req.userId,transactionId:created.id,reference:`${created.reference}-R`,kind:"BANK_TRANSFER",snapshot:{kind:"BANK_TRANSFER",reference:created.reference,status:created.status,amount:amount.toFixed(2),currency:"NGN",recipientName:verifiedName,recipientAccount:body.accountNumber,recipientBank:resolvedBankName,simulated:providerMode !== "LIVE",createdAt:created.createdAt.toISOString()}} });
+      await tx.receipt.create({
+  data: {
+    userId: req.userId,
+    transactionId: created.id,
+    reference: `${created.reference}-R`,
+    kind: "BANK_TRANSFER",
+    snapshot: {
+      kind: "BANK_TRANSFER",
+      reference: created.reference,
+      status: created.status,
+      amount: amount.toFixed(2),
+      currency: "NGN",
+      recipientName: verifiedName,
+      recipientAccount: body.accountNumber,
+      recipientBank: resolvedBankName,
+      simulated: providerMode !== "LIVE"
+    }
+  }
+});
       await tx.notification.create({ data:{userId:req.userId,type:"TRANSFER_SENT",title:"Bank transfer recorded",message:`₦${amount.toFixed(2)} bank transfer to ${verifiedName} was recorded with reference ${created.reference}.`} });
       await tx.idempotencyKey.create({ data:{key:idem,userId:req.userId,requestHash,transactionId:created.id} });
       const after = await tx.wallet.findUnique({where:{userId:req.userId},select:{balance:true}});
