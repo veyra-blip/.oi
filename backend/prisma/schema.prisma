@@ -7,21 +7,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserRole {
-  USER
-  OWNER
-  ADMIN
-}
-
 enum UserStatus {
   ACTIVE
   SUSPENDED
   LOCKED
 }
 
+enum UserRole {
+  USER
+  ADMIN
+  OWNER
+}
+
 enum TransactionStatus {
-  CREATED
-  AUTHENTICATING
+  PENDING
   PROCESSING
   SUCCESS
   FAILED
@@ -39,174 +38,412 @@ enum TransactionType {
   INTERNET
   WATER
   EDUCATION
-  SAVINGS
-  LOAN
+  SAVINGS_DEPOSIT
+  SAVINGS_WITHDRAWAL
+  LOAN_DISBURSEMENT
+  LOAN_REPAYMENT
   CARD
 }
 
-enum UpgradeLevel {
-  LEVEL_1
-  LEVEL_2
-  LEVEL_3
-  BUSINESS
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+enum SavingsType {
+  DAILY
+  TARGET
+  FIXED
+  SAFEBOX
+}
+
+enum CardStatus {
+  ACTIVE
+  FROZEN
+  BLOCKED
+}
+
+enum LoanStatus {
+  PENDING
+  APPROVED
+  ACTIVE
+  PAID
+  OVERDUE
+  REJECTED
+}
+
+enum NotificationType {
+  TRANSFER_SENT
+  TRANSFER_RECEIVED
+  PAYMENT
+  SECURITY
+  SAVINGS
+  LOAN
+  CARD
+  SYSTEM
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  phone        String     @unique
-  passwordHash String
-  role         UserRole   @default(USER)
-  status       UserStatus @default(ACTIVE)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-
-  profile       Profile?
-  identity      Identity?
-  account       Account?
-  sessions      Session[]
-  devices       Device[]
-  transactions  Transaction[] @relation("ActorTransactions")
-  notifications Notification[]
-  upgrades      Upgrade[]
-  auditLogs     AuditLog[]
+  id              String           @id @default(cuid())
+  firstName       String
+  lastName        String
+  username        String           @unique
+  phone           String           @unique
+  email           String           @unique
+  passwordHash    String
+  pinHash         String
+  accountNumber   String           @unique
+  status          UserStatus       @default(ACTIVE)
+  role            UserRole         @default(USER)
+  pinFailures     Int              @default(0)
+  pinLockedUntil  DateTime?
+  ninLast4        String?
+  identityStatus  String           @default("UNVERIFIED")
+  faceVerificationStatus String     @default("NOT_CONFIGURED")
+  upgradeLevel    String           @default("BASIC")
+  showUsername    Boolean          @default(true)
+  allowPhoneReceiving Boolean       @default(true)
+  emailNotifications Boolean        @default(true)
+  loginAlerts     Boolean           @default(true)
+  profileImageUrl String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  wallet          Wallet?
+  profile         Profile?
+  identity        Identity?
+  account         Account?
+  devices         Device[]
+  transactionEvents TransactionEvent[] @relation("TransactionEventActor")
+  receipts        Receipt[]
+  upgrades        Upgrade[]
+  auditLogs       AuditLog[] @relation("AuditActor")
+  webAuthnChallenges WebAuthnChallenge[]
+  sentTransactions Transaction[]   @relation("sender")
+  receivedTransactions Transaction[] @relation("receiver")
+  notifications   Notification[]
+  sessions        Session[]
+  securityEvents  SecurityEvent[]
+  savings         SavingsAccount[]
+  cards           Card[]
+  loans           Loan[]
+  upgradeRequests UpgradeRequest[]
 }
 
-model Profile {
-  id                   String  @id @default(cuid())
-  userId               String  @unique
-  username             String  @unique
-  firstName            String
-  lastName             String
-  profileImageUrl      String?
-  showUsername         Boolean @default(true)
-  allowPhoneReceiving  Boolean @default(true)
-  emailNotifications   Boolean @default(true)
-  loginAlerts          Boolean @default(true)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model Identity {
-  id                  String    @id @default(cuid())
-  userId              String    @unique
-  verifiedFirstName   String?
-  verifiedMiddleName  String?
-  verifiedLastName    String?
-  provider            String?
-  providerSubjectId   String?
-  status              String    @default("UNVERIFIED")
-  verifiedAt          DateTime?
-  version             Int       @default(1)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model Account {
-  id            String       @id @default(cuid())
-  userId        String       @unique
-  accountNumber String       @unique
-  balanceKobo   BigInt       @default(0)
-  level         UpgradeLevel @default(LEVEL_1)
-  currency      String       @default("NGN")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model Session {
-  id         String   @id @default(cuid())
-  userId     String
-  tokenHash  String   @unique
-  expiresAt  DateTime
-  revokedAt  DateTime?
-  createdAt  DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model Device {
-  id         String   @id @default(cuid())
-  userId     String
-  deviceName String?
-  platform   String?
-  deviceKeyId String?
-  trusted    Boolean  @default(false)
-  lastSeenAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Decimal  @default(0) @db.Decimal(18,2)
+  currency  String   @default("NGN")
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Transaction {
-  id                       String            @id @default(cuid())
-  reference                String            @unique
-  userId                   String
-  type                     TransactionType
-  status                   TransactionStatus @default(CREATED)
-  amountKobo               BigInt
-  currency                 String            @default("NGN")
-  recipientNameSnapshot    String?
-  recipientAccountSnapshot String?
-  recipientBankSnapshot    String?
-  disclosure               String?
-  providerReference        String?
-  idempotencyKey           String?           @unique
-  createdAt                DateTime          @default(now())
-  updatedAt                DateTime          @updatedAt
-  completedAt              DateTime?
+  id              String            @id @default(cuid())
+  reference       String            @unique
+  senderId        String?
+  receiverId      String?
+  type            TransactionType
+  status          TransactionStatus @default(PENDING)
+  amount          Decimal           @db.Decimal(18,2)
+  fee             Decimal           @default(0) @db.Decimal(18,2)
+  vat             Decimal           @default(0) @db.Decimal(18,2)
+  total           Decimal           @db.Decimal(18,2)
+  narration       String?
+  recipientName   String?
+  recipientAccount String?
+  recipientBank   String?
+  metadata        Json?
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
+  failureReason   String?
+  sender          User?             @relation("sender", fields: [senderId], references: [id])
+  receiver        User?             @relation("receiver", fields: [receiverId], references: [id])
+  entries         TransactionEntry[]
+  events          TransactionEvent[]
+  receipts        Receipt[]
+  idempotency     IdempotencyKey?
+  @@index([senderId, createdAt])
+  @@index([receiverId, createdAt])
+  @@index([reference])
+}
 
-  user    User              @relation("ActorTransactions", fields: [userId], references: [id])
-  events  TransactionEvent[]
-  receipt Receipt?
+model TransactionEntry {
+  id            String      @id @default(cuid())
+  transactionId String
+  userId        String
+  type          EntryType
+  amount        Decimal     @db.Decimal(18,2)
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+  createdAt     DateTime    @default(now())
+}
+
+model IdempotencyKey {
+  id            String       @id @default(cuid())
+  key           String
+  requestHash   String
+  userId        String
+  transactionId String       @unique
+  transaction   Transaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  createdAt     DateTime     @default(now())
+  @@unique([userId, key])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType @default(SYSTEM)
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshHash          String
+  previousRefreshHash  String?
+  expiresAt            DateTime
+  revokedAt            DateTime?
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([userId, expiresAt])
+}
+
+model SecurityEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  event     String
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([userId, createdAt])
+}
+
+model Bank {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  code      String        @unique
+  accounts  BankAccount[]
+}
+
+model BankAccount {
+  id            String @id @default(cuid())
+  bankId        String
+  accountNumber String @unique
+  accountName   String
+  balance       Decimal @default(1000000) @db.Decimal(18,2)
+  active        Boolean @default(true)
+  bank          Bank   @relation(fields: [bankId], references: [id], onDelete: Cascade)
+}
+
+model SavingsAccount {
+  id            String      @id @default(cuid())
+  userId        String
+  name          String
+  type          SavingsType
+  balance       Decimal     @default(0) @db.Decimal(18,2)
+  targetAmount  Decimal?    @db.Decimal(18,2)
+  maturityDate  DateTime?
+  interestRate  Decimal     @default(0) @db.Decimal(8,4)
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model Card {
+  id           String     @id @default(cuid())
+  userId       String
+  last4        String
+  maskedNumber String
+  expiryMonth  Int
+  expiryYear   Int
+  cvvHash      String
+  pinHash      String
+  status       CardStatus @default(ACTIVE)
+  spendingLimit Decimal   @default(500000) @db.Decimal(18,2)
+  createdAt    DateTime   @default(now())
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Loan {
+  id            String     @id @default(cuid())
+  userId        String
+  amount        Decimal    @db.Decimal(18,2)
+  interest      Decimal    @db.Decimal(18,2)
+  totalRepayable Decimal   @db.Decimal(18,2)
+  durationMonths Int
+  status        LoanStatus @default(PENDING)
+  createdAt     DateTime   @default(now())
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UpgradeRequest {
+  id             String   @id @default(cuid())
+  userId         String
+  requestedLevel String
+  status         String   @default("PENDING")
+  requirementNote String?
+  createdAt      DateTime @default(now())
+  reviewedAt     DateTime?
+  reviewedBy     String?
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+
+// New normalized Veyra architecture. Legacy Wallet remains during the compatibility
+// period; every balance-changing path must update Wallet and Account atomically.
+model Profile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  legalFirstName    String
+  legalLastName     String
+  displayName       String?
+  username          String   @unique
+  phone             String   @unique
+  email             String   @unique
+  avatarUrl         String?
+  preferences       Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Identity {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  status                String   @default("UNVERIFIED")
+  ninLast4              String?
+  ninProvider           String?
+  ninProviderReference  String?
+  ninVerifiedAt         DateTime?
+  faceStatus            String   @default("NOT_CONFIGURED")
+  faceProvider          String?
+  faceProviderReference String?
+  faceVerifiedAt        DateTime?
+  lockedLegalName       String?
+  lastFailureCode       String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  accountNumber String   @unique
+  currency      String   @default("NGN")
+  balanceKobo   BigInt   @default(0)
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([status, updatedAt])
+}
+
+model Device {
+  id               String   @id @default(cuid())
+  userId           String
+  credentialId     String   @unique
+  publicKeyBase64  String
+  counter          BigInt   @default(0)
+  transports       String[] @default([])
+  deviceType       String   @default("UNKNOWN")
+  backedUp         Boolean  @default(false)
+  label            String?
+  lastUsedAt       DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, revokedAt])
+}
+
+model WebAuthnChallenge {
+  id          String   @id @default(cuid())
+  userId      String
+  challenge   String
+  purpose     String
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, purpose, expiresAt])
 }
 
 model TransactionEvent {
-  id            String            @id @default(cuid())
+  id            String      @id @default(cuid())
   transactionId String
-  status        TransactionStatus
-  message       String?
-  createdAt     DateTime          @default(now())
-
-  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  actorUserId   String?
+  eventType     String
+  eventKey      String?     @unique
+  fromStatus    String?
+  toStatus      String?
+  provider      String?
+  providerRef   String?
+  payloadHash   String?
+  metadata      Json?
+  createdAt     DateTime    @default(now())
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  actor         User?       @relation("TransactionEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([transactionId, createdAt])
+  @@index([provider, providerRef])
 }
 
 model Receipt {
   id            String      @id @default(cuid())
-  transactionId String      @unique
-  dataJson      Json
+  userId        String
+  transactionId String
+  reference     String      @unique
+  kind          String
+  snapshot      Json
   createdAt     DateTime    @default(now())
-
-  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-}
-
-model Notification {
-  id        String   @id @default(cuid())
-  userId    String
-  channel   String
-  title     String
-  body      String
-  status    String   @default("QUEUED")
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  @@index([userId, createdAt])
+  @@index([transactionId])
 }
 
 model Upgrade {
-  id          String       @id @default(cuid())
-  userId      String
-  level       UpgradeLevel
-  status      String       @default("PENDING")
-  submittedAt DateTime     @default(now())
-  reviewedAt  DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  userId         String
+  level          String
+  status         String   @default("PENDING")
+  entitlementSet Json?
+  requestedAt    DateTime @default(now())
+  activatedAt    DateTime?
+  expiresAt      DateTime?
+  reviewedBy     String?
+  reviewNote     String?
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, status, requestedAt])
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String
-  action    String
-  metadata  Json?
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String   @id @default(cuid())
+  actorUserId String?
+  targetUserId String?
+  action      String
+  entityType  String?
+  entityId    String?
+  outcome     String   @default("SUCCESS")
+  ipAddress   String?
+  userAgent   String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([actorUserId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@index([action, createdAt])
 }
