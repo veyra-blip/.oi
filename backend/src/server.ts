@@ -1292,7 +1292,7 @@ function friendlyError(code: string) {
 }
 
 app.use((err: any, _req: any, res: any, _next: any) => {
-  console.error("API error:", err?.name || "unknown", err?.code || "unknown");
+  console.error("API error details:", err);
   if (err?.name === "ZodError") return res.status(400).json({ success: false, code: "VALIDATION_ERROR", message: "Check the submitted information." });
   if (err?.code === "P2002") return res.status(409).json({ success: false, code: "DUPLICATE_RESOURCE", message: "A unique account detail is already in use." });
   res.status(500).json({ success: false, code: "SERVER_ERROR", message: "Something went wrong." });
