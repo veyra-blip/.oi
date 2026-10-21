@@ -16,6 +16,14 @@ import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthen
 import { friendlyPinError, verifyTransactionPin } from "./security.js";
 
 const app = express();
+app.get("/", (_req, res) => {
+  res.status(200).json({
+    success: true,
+    name: "Veyra API",
+    status: "online",
+    message: "Veyra backend is running."
+  });
+});
 app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 4000);
 
