@@ -28,7 +28,22 @@ app.set("trust proxy", 1);
 const port = Number(process.env.PORT || 4000);
 
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173" }));
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://veyra-blip.github.io"
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Origin not allowed by CORS"));
+  }
+}));
+
 app.use(express.json({ limit: "3mb", verify: (req: any, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 50 });
