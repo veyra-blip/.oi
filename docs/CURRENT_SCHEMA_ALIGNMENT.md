@@ -1,0 +1,7 @@
+# Schema alignment and safe deployment
+
+This replacement keeps the legacy `User`, `Wallet`, `Transaction`, `TransactionEntry`, `IdempotencyKey`, `SecurityEvent`, `UpgradeRequest`, and existing service models for backward compatibility. It adds normalized `Profile`, `Identity`, `Account` (integer `balanceKobo`), `Device`, `WebAuthnChallenge`, `TransactionEvent`, `Receipt`, `Upgrade`, and `AuditLog` models. New registrations create both legacy Wallet and normalized Account rows in the same transaction. The additive migration backfills normalized Account rows from existing Wallet balances in kobo and does not reset or delete existing data. Money-moving paths must keep both representations in sync until the legacy Wallet is retired.
+
+**Production caution:** this migration has not been applied to your live Render database. Before deploying, compare the actual production `schema.prisma`, database `information_schema`, and `_prisma_migrations` records. Apply only after backing up the database and confirming the live schema matches the migration assumptions. Do not run `prisma migrate reset`, `prisma db push`, or seed against production.
+
+WebAuthn registration and assertion verification are server-side and require `WEBAUTHN_ORIGIN` to exactly match the deployed frontend origin and `WEBAUTHN_RP_ID` to match its hostname. Platform authenticators may ask for fingerprint or, on devices without fingerprint hardware, the device screen-lock PIN/pattern. This is not a Veyra-created fingerprint and Veyra never receives fingerprint data.
