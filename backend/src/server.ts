@@ -536,7 +536,17 @@ app.post("/api/services/payment", requireAuth, moneyLimiter, asyncRoute(async (r
   if (!requestKey) return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED", message: "A transaction request key is required." });
   const requestHash = hashRequest({ type: body.type, target: body.target, amount: amount.toFixed(2) });
   const transaction = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const existing = await tx.idempotencyKey.findUnique({ where: { key: requestKey }, include: { transaction: true } });
+    
+const existing = await tx.idempotencyKey.findUnique({
+  where: {
+    userId_key: {
+      userId: req.userId,
+      key: requestKey
+    }
+  },
+  include: { transaction: true }
+});
+  
     if (existing) {
       if (existing.userId !== req.userId || existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT");
       return existing.transaction;
