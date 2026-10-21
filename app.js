@@ -399,11 +399,13 @@ function profileScreen() {
   const account = state.account || {};
 
   return `
-    <header class="top">
-      ${brand()}
-      <button class="icon-btn" type="button"
-        data-action="logout">↪</button>
-    </header>
+<header class="top">
+  ${brand()}
+  <button class="icon-btn" type="button"
+    data-action="navigate"
+    data-screen="home"
+    aria-label="Return to Home">←</button>
+</header>
 
     <main class="screen">
       <h1 class="title">Your profile</h1>
