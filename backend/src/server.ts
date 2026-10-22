@@ -111,17 +111,16 @@ app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any
 const normalizedEmail = body.email.trim().toLowerCase();
 const normalizedPhone = body.phone.trim();
 const normalizedUsername = body.username.trim().toLowerCase();
+const firstName = body.firstName.trim();
+const lastName = body.lastName.trim();
 
 const exists = await prisma.user.findFirst({
   where: {
     OR: [
       { phone: normalizedPhone },
       { email: normalizedEmail },
-      {
-        profile: {
-          is: { username: normalizedUsername }
-        }
-      }
+      { username: normalizedUsername },
+      { profile: { is: { username: normalizedUsername } } }
     ]
   },
   select: { id: true }
@@ -141,20 +140,34 @@ if (exists) {
     const accountNumber = await createUniqueAccountNumber(tx);
     const u = await tx.user.create({
       data: {
-        firstName: body.firstName,
-        lastName: body.lastName,
-        username: body.username,
-        phone: body.phone,
-        email: body.email,
+        firstName,
+        lastName,
+        username: normalizedUsername,
+        phone: normalizedPhone,
+        email: normalizedEmail,
         passwordHash,
         pinHash,
         accountNumber,
         ninLast4: body.nin ? body.nin.slice(-4) : null
       }
     });
-    const startingBalance = new Prisma.Decimal(500000000);
-    await tx.wallet.create({ data: { userId: u.id, balance: startingBalance } });
-    await tx.account.create({ data: { userId: u.id, accountNumber, balanceKobo: 50000000000n, currency: "NGN", status: "ACTIVE" } });
+
+    // Account.balanceKobo is the canonical balance. Wallet is a compatibility
+    // mirror for older service routes and starts from the exact same amount.
+    const startingBalanceKobo = 50000000000n;
+    const startingBalance = new Prisma.Decimal(startingBalanceKobo.toString()).div(100);
+    await tx.account.create({
+      data: {
+        userId: u.id,
+        accountNumber,
+        balanceKobo: startingBalanceKobo,
+        currency: "NGN",
+        status: "ACTIVE"
+      }
+    });
+    await tx.wallet.create({
+      data: { userId: u.id, balance: startingBalance, currency: "NGN", status: "ACTIVE" }
+    });
     await tx.profile.create({ data: { userId: u.id, firstName: u.firstName, lastName: u.lastName, profileImageUrl: u.profileImageUrl, showUsername: true, allowPhoneReceiving: true, emailNotifications: true, loginAlerts: true, legalFirstName: u.firstName, legalLastName: u.lastName, username: u.username, phone: u.phone, email: u.email, avatarUrl: u.profileImageUrl } });
     await tx.identity.create({ data: { userId: u.id, status: "UNVERIFIED", ninLast4: u.ninLast4, faceStatus: "NOT_CONFIGURED" } });
     await tx.auditLog.create({ data: { actorUserId: u.id, targetUserId: u.id, action: "ACCOUNT_REGISTERED", entityType: "Account", entityId: u.id, metadata: { startingBalanceKobo: "50000000000" } } });
@@ -210,11 +223,8 @@ const user = await prisma.user.findFirst({
     OR: [
       { phone: identifier },
       { email: normalizedIdentifier },
-      {
-        profile: {
-          is: { username: normalizedIdentifier }
-        }
-      }
+      { username: normalizedIdentifier },
+      { profile: { is: { username: normalizedIdentifier } } }
     ]
   }
 });
@@ -272,9 +282,10 @@ app.post("/api/auth/logout", requireAuth, asyncRoute(async (req: any, res: any) 
 app.get("/api/me", requireAuth, asyncRoute(async (req: any, res: any) => {
   const user = await prisma.user.findUnique({
     where: { id: req.userId },
-    include: { wallet: true }
+    include: { account: true }
   });
   if (!user) return res.status(404).json({ success: false, message: "User not found" });
+  if (!user.account) return res.status(409).json({ success: false, code: "ACCOUNT_NOT_INITIALIZED", message: "The account record is not initialized. Contact support." });
   res.json({
     success: true,
     user: {
@@ -285,7 +296,7 @@ app.get("/api/me", requireAuth, asyncRoute(async (req: any, res: any) => {
       phone: user.phone,
       email: user.email,
       accountNumber: user.accountNumber,
-      balance: user.wallet?.balance.toString() ?? "0",
+      balance: new Prisma.Decimal(user.account.balanceKobo.toString()).div(100).toFixed(2),
       ninLast4: user.ninLast4,
       identityStatus: user.identityStatus,
       faceVerificationStatus: user.faceVerificationStatus,
@@ -1322,7 +1333,8 @@ function friendlyError(code: string) {
     SELF_TRANSFER: "You cannot transfer money to yourself.",
     ACCOUNT_NOT_FOUND: "Sender or recipient account was not found.",
     ACCOUNT_NOT_ACTIVE: "One of the accounts is not active.",
-    INSUFFICIENT_BALANCE: "Insufficient wallet balance."
+    ACCOUNT_BALANCE_MISMATCH: "Account balances need reconciliation. No money was moved.",
+    INSUFFICIENT_BALANCE: "Insufficient account balance."
   };
   return map[code] || "The transaction could not be completed.";
 }

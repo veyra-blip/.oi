@@ -29,23 +29,42 @@ export async function internalTransfer(
     }
 
     const [sender, receiver] = await Promise.all([
-      tx.user.findUnique({ where: { id: senderId }, include: { wallet: true } }),
-      tx.user.findUnique({ where: { id: recipientId }, include: { wallet: true } })
+      tx.user.findUnique({ where: { id: senderId }, include: { wallet: true, account: true } }),
+      tx.user.findUnique({ where: { id: recipientId }, include: { wallet: true, account: true } })
     ]);
 
-    if (!sender || !receiver || !sender.wallet || !receiver.wallet) throw new Error("ACCOUNT_NOT_FOUND");
+    if (!sender || !receiver || !sender.wallet || !receiver.wallet || !sender.account || !receiver.account) {
+      throw new Error("ACCOUNT_NOT_FOUND");
+    }
     if (sender.status !== "ACTIVE" || receiver.status !== "ACTIVE") throw new Error("ACCOUNT_NOT_ACTIVE");
-    if (sender.wallet.status !== "ACTIVE" || receiver.wallet.status !== "ACTIVE") throw new Error("WALLET_NOT_ACTIVE");
+    if (sender.wallet.status !== "ACTIVE" || receiver.wallet.status !== "ACTIVE" ||
+        sender.account.status !== "ACTIVE" || receiver.account.status !== "ACTIVE") {
+      throw new Error("WALLET_NOT_ACTIVE");
+    }
+
+    // Account.balanceKobo is authoritative. Wallet is retained as a legacy
+    // mirror while older service endpoints are being migrated. Stop safely
+    // rather than moving money if the two representations have drifted.
+    const amountKobo = BigInt(amount.mul(100).toFixed(0));
+    const senderWalletKobo = BigInt(sender.wallet.balance.mul(100).toFixed(0));
+    const receiverWalletKobo = BigInt(receiver.wallet.balance.mul(100).toFixed(0));
+    if (senderWalletKobo !== sender.account.balanceKobo ||
+        receiverWalletKobo !== receiver.account.balanceKobo) {
+      throw new Error("ACCOUNT_BALANCE_MISMATCH");
+    }
+
+    const accountDebit = await tx.account.updateMany({
+      where: { userId: senderId, status: "ACTIVE", balanceKobo: { gte: amountKobo } },
+      data: { balanceKobo: { decrement: amountKobo } }
+    });
+    if (accountDebit.count !== 1) throw new Error("INSUFFICIENT_BALANCE");
 
     const debit = await tx.wallet.updateMany({
       where: { userId: senderId, status: "ACTIVE", balance: { gte: amount } },
       data: { balance: { decrement: amount } }
     });
-    if (debit.count !== 1) throw new Error("INSUFFICIENT_BALANCE");
+    if (debit.count !== 1) throw new Error("ACCOUNT_BALANCE_MISMATCH");
 
-    const amountKobo = BigInt(amount.mul(100).toFixed(0));
-    const accountDebit = await tx.account.updateMany({ where: { userId: senderId, status: "ACTIVE", balanceKobo: { gte: amountKobo } }, data: { balanceKobo: { decrement: amountKobo } } });
-    if (accountDebit.count !== 1) throw new Error("ACCOUNT_BALANCE_MISMATCH");
     await tx.account.update({ where: { userId: recipientId }, data: { balanceKobo: { increment: amountKobo } } });
     await tx.wallet.update({ where: { userId: recipientId }, data: { balance: { increment: amount } } });
 
