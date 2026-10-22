@@ -22,6 +22,7 @@ enum UserRole {
 
 enum TransactionStatus {
   CREATED
+  PENDING
   AUTHENTICATING
   PROCESSING
   SUCCESS
@@ -94,6 +95,24 @@ model User {
   status               UserStatus @default(ACTIVE)
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
+
+  // Compatibility fields retained until all backend paths use Profile/Account.
+  firstName            String     @default("")
+  lastName             String     @default("")
+  username             String     @unique @default(cuid())
+  accountNumber        String     @unique @default(cuid())
+  pinHash              String     @default("")
+  pinFailures          Int        @default(0)
+  pinLockedUntil       DateTime?
+  ninLast4             String?
+  identityStatus       String     @default("UNVERIFIED")
+  faceVerificationStatus String   @default("NOT_CONFIGURED")
+  upgradeLevel         String     @default("BASIC")
+  showUsername         Boolean    @default(true)
+  allowPhoneReceiving  Boolean    @default(true)
+  emailNotifications   Boolean    @default(true)
+  loginAlerts          Boolean    @default(true)
+  profileImageUrl      String?
 
   wallet               Wallet?
   profile              Profile?
@@ -194,7 +213,7 @@ model Notification {
 model Session {
   id           String   @id @default(cuid())
   userId       String
-  refreshHash          String
+  refreshHash          String   @default("")
   previousRefreshHash  String?
   expiresAt            DateTime
   revokedAt            DateTime?
@@ -303,6 +322,15 @@ model Profile {
   allowPhoneReceiving Boolean @default(true)
   emailNotifications  Boolean @default(true)
   loginAlerts         Boolean @default(true)
+  legalFirstName      String?
+  legalLastName       String?
+  displayName         String?
+  phone               String?
+  email               String?
+  avatarUrl            String?
+  preferences         Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -315,9 +343,21 @@ model Identity {
   verifiedLastName   String?
   provider           String?
   providerSubjectId  String?
-  status             String
+  status             String    @default("UNVERIFIED")
   verifiedAt         DateTime?
-  version            Int
+  version            Int       @default(1)
+  ninLast4            String?
+  ninProvider         String?
+  ninProviderReference String?
+  ninVerifiedAt       DateTime?
+  faceStatus          String?
+  faceProvider        String?
+  faceProviderReference String?
+  faceVerifiedAt      DateTime?
+  lockedLegalName     String?
+  lastFailureCode     String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -327,8 +367,11 @@ model Account {
   userId        String       @unique
   accountNumber String       @unique
   balanceKobo   BigInt
-  level         UpgradeLevel
+  level         UpgradeLevel @default(LEVEL_1)
   currency      String
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
