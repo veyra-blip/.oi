@@ -108,10 +108,32 @@ app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any
     nin: z.string().regex(/^\d{11}$/).optional().or(z.literal(""))
   }).parse(req.body);
 
-  const exists = await prisma.user.findFirst({
-    where: { OR: [{ phone: body.phone }, { email: body.email }, { username: body.username }] }
+const normalizedEmail = body.email.trim().toLowerCase();
+const normalizedPhone = body.phone.trim();
+const normalizedUsername = body.username.trim().toLowerCase();
+
+const exists = await prisma.user.findFirst({
+  where: {
+    OR: [
+      { phone: normalizedPhone },
+      { email: normalizedEmail },
+      {
+        profile: {
+          is: { username: normalizedUsername }
+        }
+      }
+    ]
+  },
+  select: { id: true }
+});
+
+if (exists) {
+  return res.status(409).json({
+    success: false,
+    code: "ACCOUNT_EXISTS",
+    message: "Phone, email or username is already registered."
   });
-  if (exists) return res.status(409).json({ success: false, code: "ACCOUNT_EXISTS", message: "Phone, email or username is already registered." });
+}
 
   const passwordHash = await argon2.hash(body.password);
   const pinHash = await argon2.hash(body.pin);
@@ -179,9 +201,23 @@ app.post("/api/auth/login", authLimiter, asyncRoute(async (req: any, res: any) =
     password: z.string()
   }).parse(req.body);
 
-  const user = await prisma.user.findFirst({
-    where: { OR: [{ phone: body.identifier }, { email: body.identifier }, { username: body.identifier.toLowerCase() }] }
-  });
+  
+const identifier = body.identifier.trim();
+const normalizedIdentifier = identifier.toLowerCase();
+
+const user = await prisma.user.findFirst({
+  where: {
+    OR: [
+      { phone: identifier },
+      { email: normalizedIdentifier },
+      {
+        profile: {
+          is: { username: normalizedIdentifier }
+        }
+      }
+    ]
+  }
+});
 
   if (!user || !(await argon2.verify(user.passwordHash, body.password))) {
     return res.status(401).json({ success: false, code: "INVALID_LOGIN", message: "Invalid login details." });
