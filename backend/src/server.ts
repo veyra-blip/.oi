@@ -242,9 +242,41 @@ const user = await prisma.user.findFirst({
     data: { userId: user.id, refreshHash: hashToken(refresh), expiresAt: new Date(Date.now() + 730 * 86400000) }
   });
   const access = signAccess(user.id, session.id);
-  res.json({ success: true, accessToken: access, refreshToken: refresh });
-}));
+  const account = await prisma.account.findUnique({
+  where: { userId: user.id },
+  select: {
+    accountNumber: true,
+    balanceKobo: true,
+    level: true,
+    currency: true,
+    status: true
+  }
+});
 
+res.json({
+  success: true,
+  accessToken: access,
+  refreshToken: refresh,
+  user: {
+    id: user.id,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    status: user.status,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    username: user.username,
+    accountNumber: user.accountNumber,
+    upgradeLevel: user.upgradeLevel,
+    profileImageUrl: user.profileImageUrl
+  },
+  account: account
+    ? {
+        ...account,
+        balanceKobo: account.balanceKobo.toString()
+      }
+    : null
+});
 app.post("/api/auth/refresh", authLimiter, asyncRoute(async (req: any, res: any) => {
   const { refreshToken } = z.object({ refreshToken: z.string().min(20) }).parse(req.body);
   try {
