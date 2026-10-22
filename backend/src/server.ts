@@ -133,7 +133,7 @@ app.post("/api/auth/register", authLimiter, asyncRoute(async (req: any, res: any
     const startingBalance = new Prisma.Decimal(500000000);
     await tx.wallet.create({ data: { userId: u.id, balance: startingBalance } });
     await tx.account.create({ data: { userId: u.id, accountNumber, balanceKobo: 50000000000n, currency: "NGN", status: "ACTIVE" } });
-    await tx.profile.create({ data: { userId: u.id, legalFirstName: u.firstName, legalLastName: u.lastName, username: u.username, phone: u.phone, email: u.email, avatarUrl: u.profileImageUrl } });
+    await tx.profile.create({ data: { userId: u.id, firstName: u.firstName, lastName: u.lastName, profileImageUrl: u.profileImageUrl, showUsername: true, allowPhoneReceiving: true, emailNotifications: true, loginAlerts: true, legalFirstName: u.firstName, legalLastName: u.lastName, username: u.username, phone: u.phone, email: u.email, avatarUrl: u.profileImageUrl } });
     await tx.identity.create({ data: { userId: u.id, status: "UNVERIFIED", ninLast4: u.ninLast4, faceStatus: "NOT_CONFIGURED" } });
     await tx.auditLog.create({ data: { actorUserId: u.id, targetUserId: u.id, action: "ACCOUNT_REGISTERED", entityType: "Account", entityId: u.id, metadata: { startingBalanceKobo: "50000000000" } } });
     await tx.notification.create({
@@ -366,7 +366,7 @@ app.patch("/api/profile", requireAuth, authLimiter, asyncRoute(async (req: any, 
   if ((identity?.status === "VERIFIED" || currentUser?.identityStatus === "VERIFIED") && ((body.firstName && body.firstName !== currentUser?.firstName) || (body.lastName && body.lastName !== currentUser?.lastName))) return res.status(403).json({ success:false, code:"VERIFIED_NAME_LOCKED", message:"Your legal name is locked after identity verification. Contact support for an authorized correction." });
   const user = await prisma.user.update({ where: { id: req.userId }, data: { ...body, email: body.email?.toLowerCase(), username: body.username?.toLowerCase() },
     select: { id: true, firstName: true, lastName: true, username: true, phone: true, email: true, accountNumber: true, showUsername: true, allowPhoneReceiving: true, emailNotifications: true, loginAlerts: true, profileImageUrl: true, upgradeLevel: true, identityStatus: true } });
-  await prisma.profile.upsert({ where: { userId: req.userId }, create: { userId: req.userId, legalFirstName: user.firstName, legalLastName: user.lastName, username: user.username, phone: user.phone, email: user.email, avatarUrl: user.profileImageUrl }, update: { legalFirstName: user.firstName, legalLastName: user.lastName, username: user.username, phone: user.phone, email: user.email, avatarUrl: user.profileImageUrl } });
+  await prisma.profile.upsert({ where: { userId: req.userId }, create: { userId: req.userId, firstName: user.firstName, lastName: user.lastName, profileImageUrl: user.profileImageUrl, username: user.username, showUsername: user.showUsername, allowPhoneReceiving: user.allowPhoneReceiving, emailNotifications: user.emailNotifications, loginAlerts: user.loginAlerts, legalFirstName: user.firstName, legalLastName: user.lastName, phone: user.phone, email: user.email, avatarUrl: user.profileImageUrl }, update: { firstName: user.firstName, lastName: user.lastName, profileImageUrl: user.profileImageUrl, username: user.username, showUsername: user.showUsername, allowPhoneReceiving: user.allowPhoneReceiving, emailNotifications: user.emailNotifications, loginAlerts: user.loginAlerts, legalFirstName: user.firstName, legalLastName: user.lastName, phone: user.phone, email: user.email, avatarUrl: user.profileImageUrl } });
   await prisma.auditLog.create({ data: { actorUserId: req.userId, targetUserId: req.userId, action: "PROFILE_UPDATED", entityType: "Profile", entityId: req.userId } });
   res.json({ success: true, user });
 }));
@@ -640,9 +640,12 @@ app.post("/api/security/password", requireAuth, authLimiter, asyncRoute(async (r
 }));
 
 app.post("/api/security/pin", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({ currentPin: z.string().regex(/^\d{4}$/), newPin: z.string().regex(/^\d{4}$/) }).parse(req.body);
+  const body = z.object({ currentPin: z.string().regex(/^\d{4}$/).optional(), newPin: z.string().regex(/^\d{4}$/) }).parse(req.body);
   const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { pinHash: true } });
-  if (!user || !(await argon2.verify(user.pinHash, body.currentPin))) return res.status(401).json({ success: false, code: "INVALID_PIN", message: "Current transaction PIN is incorrect." });
+  if (!user) return res.status(404).json({ success: false, code: "USER_NOT_FOUND", message: "Account not found." });
+  if (user.pinHash && (!body.currentPin || !(await argon2.verify(user.pinHash, body.currentPin)))) {
+    return res.status(401).json({ success: false, code: "INVALID_PIN", message: "Current transaction PIN is incorrect." });
+  }
   await prisma.user.update({ where: { id: req.userId }, data: { pinHash: await argon2.hash(body.newPin), pinFailures: 0, pinLockedUntil: null } });
   res.json({ success: true, message: "Transaction PIN updated successfully." });
 }));
@@ -729,9 +732,7 @@ app.post("/api/security/identity/verify-nin", requireAuth, authLimiter, asyncRou
     }
     const updated = await prisma.user.update({ where: { id: req.userId }, data: { ninLast4: body.nin.slice(-4), identityStatus: "VERIFIED" }, select: { identityStatus: true, ninLast4: true } });
     await prisma.identity.upsert({ where:{userId:req.userId}, create:{userId:req.userId,status:"VERIFIED",ninLast4:updated.ninLast4,ninProvider:"IDENTITY",ninProviderReference:String(result.reference || result.verificationId || "provider-confirmed"),ninVerifiedAt:new Date(),lockedLegalName:registeredName}, update:{status:"VERIFIED",ninLast4:updated.ninLast4,ninProvider:"IDENTITY",ninProviderReference:String(result.reference || result.verificationId || "provider-confirmed"),ninVerifiedAt:new Date(),lockedLegalName:registeredName} });
-    await prisma.identity.upsert({ where:{userId:req.userId}, create:{userId:req.userId,status:"VERIFIED",ninLast4:updated.ninLast4,ninProvider:"IDENTITY",ninProviderReference:String(result.reference || result.verificationId || "provider-confirmed"),ninVerifiedAt:new Date()}, update:{status:"VERIFIED",ninLast4:updated.ninLast4,ninProvider:"IDENTITY",ninProviderReference:String(result.reference || result.verificationId || "provider-confirmed"),ninVerifiedAt:new Date()} });
     await prisma.securityEvent.create({ data: { userId: req.userId, event: "NIN_VERIFIED", metadata: { provider: "IDENTITY", last4: updated.ninLast4 } } });
-    await prisma.auditLog.create({ data:{actorUserId:req.userId,targetUserId:req.userId,action:"NIN_VERIFICATION_CONFIRMED",entityType:"Identity",entityId:req.userId,metadata:{provider:"IDENTITY",last4:updated.ninLast4}} });
     await prisma.auditLog.create({ data:{actorUserId:req.userId,targetUserId:req.userId,action:"NIN_VERIFICATION_CONFIRMED",entityType:"Identity",entityId:req.userId,metadata:{provider:"IDENTITY",last4:updated.ninLast4}} });
     res.json({ success: true, identityStatus: updated.identityStatus, ninLast4: updated.ninLast4, message: "Identity provider confirmed the NIN." });
   } catch (e: any) {
@@ -748,8 +749,7 @@ app.post("/api/security/face/enroll", requireAuth, authLimiter, asyncRoute(async
     const result: any = await callProvider("FACE", "/face/enroll", { template: body.template, userId: req.userId });
     if (result?.enrolled !== true) return res.status(400).json({ success: false, code: "FACE_ENROLLMENT_FAILED", message: "The face provider did not confirm enrollment." });
     await prisma.user.update({ where: { id: req.userId }, data: { faceVerificationStatus: "ENROLLED" } });
-    await prisma.identity.upsert({ where:{userId:req.userId}, create:{userId:req.userId,faceStatus:"ENROLLED",faceProvider:"FACE",faceProviderReference:String(result.reference || result.enrollmentId || "provider-confirmed")}, update:{faceStatus:"ENROLLED",faceProvider:"FACE",faceProviderReference:String(result.reference || result.enrollmentId || "provider-confirmed")} });
-    await prisma.identity.upsert({ where:{userId:req.userId}, create:{userId:req.userId,faceStatus:"ENROLLED",faceProvider:"FACE",faceProviderReference:String(result.reference || result.enrollmentId || "provider-confirmed")}, update:{faceStatus:"ENROLLED",faceProvider:"FACE",faceProviderReference:String(result.reference || result.enrollmentId || "provider-confirmed")} });
+    await prisma.identity.upsert({ where:{userId:req.userId}, create:{userId:req.userId,status:"ENROLLED",faceStatus:"ENROLLED",faceProvider:"FACE",faceProviderReference:String(result.reference || result.enrollmentId || "provider-confirmed")}, update:{status:"ENROLLED",faceStatus:"ENROLLED",faceProvider:"FACE",faceProviderReference:String(result.reference || result.enrollmentId || "provider-confirmed")} });
     await prisma.securityEvent.create({ data: { userId: req.userId, event: "FACE_ENROLLED", metadata: { provider: "FACE" } } });
     await prisma.auditLog.create({ data:{actorUserId:req.userId,targetUserId:req.userId,action:"FACE_ENROLLMENT_CONFIRMED",entityType:"Identity",entityId:req.userId,metadata:{provider:"FACE"}} });
     await prisma.auditLog.create({ data:{actorUserId:req.userId,targetUserId:req.userId,action:"FACE_ENROLLMENT_CONFIRMED",entityType:"Identity",entityId:req.userId,metadata:{provider:"FACE"}} });

@@ -19,6 +19,7 @@ export async function verifyTransactionPin(userId: string, pin: string) {
     const user = rows[0];
     if (!user) throw new Error("USER_NOT_FOUND");
     if (user.pinLockedUntil && user.pinLockedUntil > new Date()) throw new Error("PIN_LOCKED");
+    if (!user.pinHash) throw new Error("PIN_NOT_SET");
 
     const valid = await argon2.verify(user.pinHash, pin);
     if (!valid) {
@@ -43,6 +44,7 @@ export async function verifyTransactionPin(userId: string, pin: string) {
 
 export function friendlyPinError(code: string) {
   if (code === "PIN_LOCKED") return "Transaction PIN is temporarily locked.";
+  if (code === "PIN_NOT_SET") return "Set your transaction PIN before making PIN-protected transactions.";
   if (code === "INVALID_PIN") return "Incorrect transaction PIN.";
   return "Transaction PIN verification failed.";
 }
