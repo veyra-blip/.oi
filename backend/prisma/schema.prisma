@@ -470,7 +470,7 @@ enum UpgradeLevel {
 
 model AuditLog {
   id          String   @id @default(cuid())
-  userId      String
+  userId      String?
   actorUserId String?
   targetUserId String?
   action      String
