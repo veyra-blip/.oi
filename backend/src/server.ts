@@ -170,13 +170,16 @@ if (exists) {
     });
     await tx.profile.create({ data: { userId: u.id, firstName: u.firstName, lastName: u.lastName, profileImageUrl: u.profileImageUrl, showUsername: true, allowPhoneReceiving: true, emailNotifications: true, loginAlerts: true, legalFirstName: u.firstName, legalLastName: u.lastName, username: u.username, phone: u.phone, email: u.email, avatarUrl: u.profileImageUrl } });
     await tx.identity.create({ data: { userId: u.id, status: "UNVERIFIED", ninLast4: u.ninLast4, faceStatus: "NOT_CONFIGURED" } });
-    await tx.auditLog.create({ data: { actorUserId: u.id, targetUserId: u.id, action: "ACCOUNT_REGISTERED", entityType: "Account", entityId: u.id, metadata: { startingBalanceKobo: "50000000000" } } });
+    await tx.auditLog.create({ data: { userId: u.id, actorUserId: u.id, targetUserId: u.id, action: "ACCOUNT_REGISTERED", entityType: "Account", entityId: u.id, metadata: { startingBalanceKobo: "50000000000" } } });
     await tx.notification.create({
       data: {
         userId: u.id,
+        channel: "IN_APP",
         type: "SYSTEM",
         title: "Welcome",
-        message: "Your internal wallet has been created."
+        body: "Your internal wallet has been created.",
+        message: "Your internal wallet has been created.",
+        status: "QUEUED"
       }
     });
     return u;

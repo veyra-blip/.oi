@@ -205,9 +205,12 @@ model IdempotencyKey {
 model Notification {
   id        String           @id @default(cuid())
   userId    String
+  channel   String           @default("IN_APP")
   type      NotificationType @default(SYSTEM)
   title     String
+  body      String           @default("")
   message   String
+  status    String           @default("QUEUED")
   read      Boolean          @default(false)
   createdAt DateTime         @default(now())
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -467,6 +470,7 @@ enum UpgradeLevel {
 
 model AuditLog {
   id          String   @id @default(cuid())
+  userId      String
   actorUserId String?
   targetUserId String?
   action      String
