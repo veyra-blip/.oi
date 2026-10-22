@@ -1,7 +1,13 @@
+BEGIN;
+
 -- Veyra production reconciliation migration.
 -- Additive only. Preserves existing owner, account and balance rows.
 ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'OWNER';
 ALTER TYPE "TransactionStatus" ADD VALUE IF NOT EXISTS 'PENDING';
+ALTER TYPE "TransactionType" ADD VALUE IF NOT EXISTS 'SAVINGS_DEPOSIT';
+ALTER TYPE "TransactionType" ADD VALUE IF NOT EXISTS 'SAVINGS_WITHDRAWAL';
+ALTER TYPE "TransactionType" ADD VALUE IF NOT EXISTS 'LOAN_REPAYMENT';
+ALTER TYPE "TransactionType" ADD VALUE IF NOT EXISTS 'LOAN_DISBURSEMENT';
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'EntryType') THEN
     CREATE TYPE "EntryType" AS ENUM ('DEBIT','CREDIT');
@@ -37,14 +43,14 @@ ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailNotifications" BOOLEAN NOT NUL
 ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "loginAlerts" BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileImageUrl" TEXT;
 
+-- Use correlated lookups so the target User alias is never referenced from
+-- a JOIN's ON clause (which PostgreSQL can reject as an invalid reference).
 UPDATE "User" u SET
-  "firstName" = COALESCE(NULLIF(u."firstName", ''), p."firstName", ''),
-  "lastName" = COALESCE(NULLIF(u."lastName", ''), p."lastName", ''),
-  "username" = COALESCE(NULLIF(u."username", ''), p."username"),
-  "profileImageUrl" = COALESCE(u."profileImageUrl", p."profileImageUrl"),
-  "identityStatus" = COALESCE(NULLIF(u."identityStatus", 'UNVERIFIED'), i."status", 'UNVERIFIED')
-FROM "Profile" p LEFT JOIN "Identity" i ON i."userId" = u."id"
-WHERE p."userId" = u."id";
+  "firstName" = COALESCE(NULLIF(u."firstName", ''), (SELECT p."firstName" FROM "Profile" p WHERE p."userId" = u."id"), ''),
+  "lastName" = COALESCE(NULLIF(u."lastName", ''), (SELECT p."lastName" FROM "Profile" p WHERE p."userId" = u."id"), ''),
+  "username" = COALESCE(NULLIF(u."username", ''), (SELECT p."username" FROM "Profile" p WHERE p."userId" = u."id")),
+  "profileImageUrl" = COALESCE(u."profileImageUrl", (SELECT p."profileImageUrl" FROM "Profile" p WHERE p."userId" = u."id")),
+  "identityStatus" = COALESCE(NULLIF(u."identityStatus", 'UNVERIFIED'), (SELECT i."status" FROM "Identity" i WHERE i."userId" = u."id"), 'UNVERIFIED');
 UPDATE "User" u SET "accountNumber" = a."accountNumber"
 FROM "Account" a WHERE a."userId" = u."id" AND (u."accountNumber" IS NULL OR u."accountNumber" = '');
 UPDATE "User" SET "pinHash" = COALESCE("pinHash", ''), "firstName" = COALESCE("firstName", ''), "lastName" = COALESCE("lastName", '');
@@ -97,6 +103,10 @@ ALTER TABLE "Session" ADD COLUMN IF NOT EXISTS "previousRefreshHash" TEXT;
 UPDATE "Session" SET "refreshHash" = COALESCE("refreshHash", "tokenHash", '');
 ALTER TABLE "Session" ALTER COLUMN "refreshHash" SET DEFAULT '';
 ALTER TABLE "Session" ALTER COLUMN "refreshHash" SET NOT NULL;
+-- The pre-existing production table requires tokenHash, but the current API
+-- writes refreshHash instead. Keep legacy tokenHash values intact while allowing
+-- new API sessions to omit that legacy column. UNIQUE indexes allow multiple NULLs.
+ALTER TABLE "Session" ALTER COLUMN "tokenHash" DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS "Session_userId_expiresAt_idx" ON "Session"("userId", "expiresAt");
 
 CREATE TABLE IF NOT EXISTS "Wallet" (
@@ -236,3 +246,5 @@ CREATE INDEX IF NOT EXISTS "Receipt_userId_createdAt_idx" ON "Receipt"("userId",
 CREATE INDEX IF NOT EXISTS "AuditLog_actorUserId_createdAt_idx" ON "AuditLog"("actorUserId","createdAt");
 CREATE INDEX IF NOT EXISTS "AuditLog_targetUserId_createdAt_idx" ON "AuditLog"("targetUserId","createdAt");
 CREATE INDEX IF NOT EXISTS "AuditLog_action_createdAt_idx" ON "AuditLog"("action","createdAt");
+
+COMMIT;
