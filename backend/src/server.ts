@@ -277,6 +277,8 @@ res.json({
       }
     : null
 });
+  }));
+
 app.post("/api/auth/refresh", authLimiter, asyncRoute(async (req: any, res: any) => {
   const { refreshToken } = z.object({ refreshToken: z.string().min(20) }).parse(req.body);
   try {
