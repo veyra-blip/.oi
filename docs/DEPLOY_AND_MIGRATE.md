@@ -6,7 +6,7 @@ The audited Render database already contains the normalized Veyra tables (`User`
 
 `backend/prisma/migrations/20261022070000_production_reconciliation/migration.sql`
 
-This migration is **additive only**. It does not reset, delete, truncate, recreate, or overwrite the existing owner or account balance. It adds the compatibility fields used by the current API, creates the missing legacy/support tables (`Wallet`, `TransactionEntry`, `IdempotencyKey`, `SecurityEvent`, `Bank`, `BankAccount`, `SavingsAccount`, `Card`, `Loan`, `UpgradeRequest`, `WebAuthnChallenge`), and backfills `Wallet` from the existing normalized `Account` balance.
+This migration is **additive only**. It does not reset, delete, truncate, recreate, or overwrite the existing owner or `Account.balanceKobo`. It adds the compatibility fields used by the current API, creates the missing legacy/support tables (`Wallet`, `TransactionEntry`, `IdempotencyKey`, `SecurityEvent`, `Bank`, `BankAccount`, `SavingsAccount`, `Card`, `Loan`, `UpgradeRequest`, `WebAuthnChallenge`), and backfills `Wallet` from the existing normalized `Account` balance. It also makes the legacy `Session.tokenHash` column nullable while retaining existing values, because the current API writes `refreshHash` instead.
 
 ### Important migration-history warning
 
@@ -37,7 +37,7 @@ Start Command:
 npm start
 ```
 
-The application build does not automatically execute a database migration.
+The application build does not automatically execute a database migration. Do not run this SQL until a fresh backup is taken and the live schema and migration state are confirmed. The SQL is written to preserve existing account rows, but it still changes the production schema and must be run deliberately.
 
 ## Owner account
 
