@@ -724,14 +724,102 @@ app.post("/api/security/password", requireAuth, authLimiter, asyncRoute(async (r
 }));
 
 app.post("/api/security/pin", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
-  const body = z.object({ currentPin: z.string().regex(/^\d{4}$/).optional(), newPin: z.string().regex(/^\d{4}$/) }).parse(req.body);
-  const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { pinHash: true } });
-  if (!user) return res.status(404).json({ success: false, code: "USER_NOT_FOUND", message: "Account not found." });
-  if (user.pinHash && (!body.currentPin || !(await argon2.verify(user.pinHash, body.currentPin)))) {
-    return res.status(401).json({ success: false, code: "INVALID_PIN", message: "Current transaction PIN is incorrect." });
+  const body = z.object({
+    currentPin: z.string().regex(/^\d{4}$/).optional(),
+    currentPassword: z.string().min(1).max(128).optional(),
+    newPin: z.string().regex(/^\d{4}$/)
+  }).parse(req.body);
+
+  const user = await prisma.user.findUnique({
+    where: { id: req.userId },
+    select: { pinHash: true, passwordHash: true }
+  });
+
+  if (!user) {
+    return res.status(404).json({
+      success: false, code: "USER_NOT_FOUND", message: "Account not found."
+    });
   }
-  await prisma.user.update({ where: { id: req.userId }, data: { pinHash: await argon2.hash(body.newPin), pinFailures: 0, pinLockedUntil: null } });
+
+  if (user.pinHash) {
+    if (!body.currentPin || !(await argon2.verify(user.pinHash, body.currentPin))) {
+      return res.status(401).json({
+        success: false, code: "INVALID_PIN",
+        message: "Current transaction PIN is incorrect."
+      });
+    }
+  } else {
+    if (!body.currentPassword || !(await argon2.verify(user.passwordHash, body.currentPassword))) {
+      return res.status(401).json({
+        success: false, code: "INVALID_PASSWORD",
+        message: "Verify your account password before setting a transaction PIN."
+      });
+    }
+  }
+
+  const pinHash = await argon2.hash(body.newPin);
+
+  await prisma.user.update({
+    where: { id: req.userId },
+    data: { pinHash, pinFailures: 0, pinLockedUntil: null }
+  });
+
   res.json({ success: true, message: "Transaction PIN updated successfully." });
+}));
+
+app.post("/api/security/pin/recover", requireAuth, authLimiter, asyncRoute(async (req: any, res: any) => {
+  const body = z.object({
+    currentPassword: z.string().min(1).max(128),
+    newPin: z.string().regex(/^\d{4}$/)
+  }).parse(req.body);
+
+  const user = await prisma.user.findUnique({
+    where: { id: req.userId },
+    select: { id: true, passwordHash: true }
+  });
+
+  if (!user) {
+    return res.status(404).json({
+      success: false, code: "USER_NOT_FOUND", message: "Account not found."
+    });
+  }
+
+  const passwordValid = await argon2.verify(user.passwordHash, body.currentPassword);
+
+  if (!passwordValid) {
+    return res.status(401).json({
+      success: false, code: "INVALID_PASSWORD",
+      message: "Current account password is incorrect."
+    });
+  }
+
+  const pinHash = await argon2.hash(body.newPin);
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.user.update({
+      where: { id: req.userId },
+      data: { pinHash, pinFailures: 0, pinLockedUntil: null }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorUserId: req.userId,
+        targetUserId: req.userId,
+        action: "TRANSACTION_PIN_RECOVERED",
+        entityType: "User",
+        entityId: req.userId,
+        outcome: "SUCCESS",
+        ipAddress: req.ip,
+        userAgent: String(req.get("user-agent") || ""),
+        metadata: { method: "ACCOUNT_PASSWORD", pinLockCleared: true }
+      }
+    });
+  });
+
+  res.json({
+    success: true,
+    message: "Transaction PIN recovered successfully. You can now make PIN-protected transactions."
+  });
 }));
 
 // WebAuthn is verified on the backend. On phones without a fingerprint sensor,
