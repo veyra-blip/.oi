@@ -1,0 +1,16 @@
+VEYRA AUTH RECONCILIATION PATCH
+
+Why this patch exists:
+- Login and registration query compatibility fields on User that were missing from the audited live database.
+- Registration also writes Wallet and compatibility profile/identity fields.
+- Login/registration create Session rows using refreshHash, while the old production Session.tokenHash column was NOT NULL.
+- The earlier SQL had a PostgreSQL UPDATE/JOIN alias issue. This corrected copy uses correlated subqueries and wraps the SQL in a transaction.
+
+Safe order:
+1. Take a fresh Render PostgreSQL backup.
+2. Confirm the live database is still the audited Veyra database and check _prisma_migrations. Do not run older migration folders.
+3. Review/apply sql/PRODUCTION_RECONCILIATION_20261022.sql once in the protected psql session. The SQL is additive; it does not reset/delete owner or Account rows.
+4. Verify User/Profile/Identity/Account counts and Account.balanceKobo are unchanged; verify Wallet has a matching balance in naira.
+5. Then test registration and login. The Render build alone does not execute SQL migrations.
+
+Never run prisma migrate dev, prisma db push, prisma migrate reset, or npm run seed against production.
