@@ -895,5 +895,503 @@ window.performVTransfer = async function (mode = 'pin') {
 };
 </script>
 
+
+<script>
+/* VEYRA_TRANSFER_FINAL_UI_V2 */
+
+(function () {
+  const oldTransferShowPin = window.transferShowPin;
+
+  function transferShell(title, subtitle, body) {
+    return `
+      <div class="vtx-shell">
+        <div class="vtx-head">
+          <div class="vtx-icon">↗</div>
+          <div>
+            <h2>${title}</h2>
+            <p>${subtitle}</p>
+          </div>
+        </div>
+        ${body}
+      </div>`;
+  }
+
+  function transferDetails(t) {
+    const r = t.recipient;
+    return `
+      <div class="vtx-summary">
+        <div class="vtx-recipient">
+          <div class="vtx-avatar">${esc((r.firstName || '?').charAt(0).toUpperCase())}</div>
+          <div>
+            <b>${esc((r.firstName || '') + ' ' + (r.lastName || ''))}</b>
+            <span>Veyra account ${esc(r.accountNumber || '')}</span>
+          </div>
+        </div>
+        <div class="vtx-amount">${money(t.amount)}</div>
+        ${t.note ? `<div class="vtx-note">${esc(t.note)}</div>` : ''}
+      </div>`;
+  }
+
+  function stageMarkup(active) {
+    const stages = [
+      ['auth', '1', 'Authenticating', 'Securing your authorization'],
+      ['init', '2', 'Initializing transaction', 'Preparing the transfer'],
+      ['pay', '3', 'Processing payment', 'Updating the transfer ledger'],
+      ['receipt', '4', 'Processing receipt', 'Confirming the transaction']
+    ];
+
+    return `
+      <div class="vtx-progress">
+        ${stages.map((x, i) => `
+          <div class="vtx-stage-row ${i < active ? 'done' : ''} ${i === active ? 'active' : ''}">
+            <div class="vtx-stage-dot">${i < active ? '✓' : x[1]}</div>
+            <div class="vtx-stage-copy">
+              <b>${x[2]}</b>
+              <span>${x[3]}</span>
+            </div>
+            ${i === active ? '<div class="vtx-stage-loader"></div>' : ''}
+          </div>
+        `).join('<div class="vtx-stage-line"></div>')}
+      </div>`;
+  }
+
+  function renderProcessing(t, active) {
+    const out = document.getElementById('transferNext');
+    if (!out) return;
+
+    out.innerHTML = transferShell(
+      'Sending money',
+      'Please keep this screen open while Veyra processes your transfer.',
+      transferDetails(t) + stageMarkup(active)
+    );
+  }
+
+  function injectTransferStyles() {
+    if (document.getElementById('veyra-transfer-v2-css')) return;
+
+    const style = document.createElement('style');
+    style.id = 'veyra-transfer-v2-css';
+    style.textContent = `
+      .vtx-shell{
+        margin:0;
+        padding:24px;
+        border-radius:24px;
+        background:linear-gradient(145deg,#07140f,#0b2118);
+        border:1px solid rgba(0,208,132,.20);
+        box-shadow:0 18px 50px rgba(0,0,0,.28);
+        color:#fff;
+      }
+      .vtx-head{
+        display:flex;
+        align-items:center;
+        gap:14px;
+        margin-bottom:22px;
+      }
+      .vtx-head h2{
+        margin:0 0 4px;
+        font-size:22px;
+      }
+      .vtx-head p{
+        margin:0;
+        color:rgba(255,255,255,.62);
+        font-size:13px;
+      }
+      .vtx-icon{
+        width:48px;
+        height:48px;
+        border-radius:15px;
+        display:grid;
+        place-items:center;
+        background:#00d084;
+        color:#062016;
+        font-size:25px;
+        font-weight:800;
+      }
+      .vtx-summary{
+        padding:18px;
+        border-radius:18px;
+        background:rgba(255,255,255,.055);
+        border:1px solid rgba(255,255,255,.07);
+        margin-bottom:22px;
+      }
+      .vtx-recipient{
+        display:flex;
+        align-items:center;
+        gap:12px;
+      }
+      .vtx-avatar{
+        width:42px;
+        height:42px;
+        border-radius:50%;
+        display:grid;
+        place-items:center;
+        background:#00d084;
+        color:#062016;
+        font-weight:800;
+      }
+      .vtx-recipient b,.vtx-recipient span{
+        display:block;
+      }
+      .vtx-recipient span{
+        margin-top:3px;
+        color:rgba(255,255,255,.55);
+        font-size:12px;
+      }
+      .vtx-amount{
+        margin-top:18px;
+        font-size:30px;
+        font-weight:800;
+      }
+      .vtx-note{
+        margin-top:8px;
+        color:rgba(255,255,255,.58);
+        font-size:13px;
+      }
+      .vtx-progress{
+        margin:10px 0 4px;
+      }
+      .vtx-stage-row{
+        min-height:58px;
+        display:flex;
+        align-items:center;
+        gap:13px;
+        opacity:.42;
+        transition:all .25s ease;
+      }
+      .vtx-stage-row.active,.vtx-stage-row.done{
+        opacity:1;
+      }
+      .vtx-stage-dot{
+        width:32px;
+        height:32px;
+        flex:0 0 32px;
+        border-radius:50%;
+        display:grid;
+        place-items:center;
+        background:rgba(255,255,255,.10);
+        font-size:12px;
+        font-weight:800;
+      }
+      .vtx-stage-row.active .vtx-stage-dot{
+        background:#00d084;
+        color:#062016;
+        box-shadow:0 0 0 6px rgba(0,208,132,.10);
+      }
+      .vtx-stage-row.done .vtx-stage-dot{
+        background:#00d084;
+        color:#062016;
+      }
+      .vtx-stage-copy{
+        flex:1;
+      }
+      .vtx-stage-copy b,.vtx-stage-copy span{
+        display:block;
+      }
+      .vtx-stage-copy b{
+        font-size:14px;
+      }
+      .vtx-stage-copy span{
+        margin-top:3px;
+        color:rgba(255,255,255,.48);
+        font-size:11px;
+      }
+      .vtx-stage-loader{
+        width:15px;
+        height:15px;
+        border:2px solid rgba(255,255,255,.18);
+        border-top-color:#00d084;
+        border-radius:50%;
+        animation:vtxspin .7s linear infinite;
+      }
+      .vtx-stage-line{
+        width:2px;
+        height:14px;
+        margin-left:15px;
+        background:rgba(255,255,255,.10);
+      }
+      .vtx-security{
+        margin-top:18px;
+        padding:18px;
+        border-radius:18px;
+        background:rgba(255,255,255,.045);
+        border:1px solid rgba(255,255,255,.07);
+      }
+      .vtx-security h3{
+        margin:0 0 5px;
+      }
+      .vtx-security p{
+        margin:0 0 16px;
+        color:rgba(255,255,255,.55);
+        font-size:12px;
+      }
+      .vtx-method{
+        width:100%;
+        padding:15px 16px;
+        border-radius:14px;
+        margin-top:9px;
+        border:1px solid rgba(255,255,255,.10);
+        background:rgba(255,255,255,.06);
+        color:#fff;
+        text-align:left;
+        cursor:pointer;
+      }
+      .vtx-method b,.vtx-method span{
+        display:block;
+      }
+      .vtx-method span{
+        margin-top:3px;
+        color:rgba(255,255,255,.48);
+        font-size:11px;
+      }
+      .vtx-pin-wrap{
+        margin-top:12px;
+      }
+      @keyframes vtxspin{
+        to{transform:rotate(360deg)}
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  window.transferShowPin = function () {
+    injectTransferStyles();
+
+    const t = window.__vTransfer;
+    const out = document.getElementById('transferNext');
+
+    if (!t || !t.recipient || !out) {
+      alert('Transfer details are missing. Please start again.');
+      return;
+    }
+
+    out.innerHTML = transferShell(
+      'Authorize transfer',
+      'Choose how you want to securely authorize this transaction.',
+      transferDetails(t) + `
+        <div class="vtx-security">
+          <h3>Security authorization</h3>
+          <p>Only after authorization will Veyra begin processing the transfer.</p>
+
+          <button class="vtx-method" onclick="performVTransfer('biometric')">
+            <b>◉ Use fingerprint / device authentication</b>
+            <span>Authorize this exact transfer using your device.</span>
+          </button>
+
+          <button class="vtx-method" onclick="showVeyraTransferPin()">
+            <b>⌕ Use transaction PIN</b>
+            <span>Enter your 4-digit transaction PIN.</span>
+          </button>
+
+          <div id="vtxPinArea"></div>
+        </div>
+      `
+    );
+  };
+
+  window.showVeyraTransferPin = function () {
+    const box = document.getElementById('vtxPinArea');
+    if (!box) return;
+
+    box.innerHTML = `
+      <div class="vtx-pin-wrap">
+        <div class="field">
+          <label>Transaction PIN</label>
+          <input id="vTransferPin" class="v-pin"
+            inputmode="numeric" maxlength="4"
+            autocomplete="off" placeholder="••••">
+        </div>
+        <button class="btn primary full" onclick="performVTransfer('pin')">
+          Authorize and continue
+        </button>
+      </div>`;
+  };
+
+  window.performVTransfer = async function (mode) {
+    const t = window.__vTransfer;
+    const out = document.getElementById('transferNext');
+
+    if (!t || !t.recipient || !out) {
+      alert('Transfer details are missing. Please start again.');
+      return;
+    }
+
+    let authorizationId = null;
+    let pin = null;
+
+    try {
+      if (mode === 'biometric') {
+        const supported =
+          window.isSecureContext &&
+          !!window.PublicKeyCredential &&
+          !!navigator.credentials &&
+          typeof navigator.credentials.get === 'function';
+
+        if (!supported) {
+          out.innerHTML = transferShell(
+            'Device authentication unavailable',
+            'Your current browser cannot access the secure device authenticator.',
+            transferDetails(t) + `
+              <div class="notice error" style="margin-top:16px">
+                <b>Fingerprint authentication is unavailable here.</b>
+                <p>Open Veyra in Chrome or another browser with WebAuthn support over HTTPS, or use your transaction PIN.</p>
+              </div>
+              <div class="vtx-security">
+                <button class="vtx-method" onclick="transferShowPin()">
+                  <b>Use another authorization method</b>
+                  <span>Return to PIN or device authentication.</span>
+                </button>
+              </div>`
+          );
+          return;
+        }
+
+        renderProcessing(t, 0);
+
+        const options = await api('/api/security/webauthn/transfer/options', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'INTERNAL_TRANSFER',
+            recipientId: String(t.recipient.id),
+            amount: t.amount,
+            narration: t.note || ''
+          })
+        });
+
+        if (!options?.challengeId || !options?.publicKey) {
+          throw new Error('The server did not provide a valid device-authentication challenge.');
+        }
+
+        const credential = await navigator.credentials.get({
+          publicKey: vPublicKeyOptions(options.publicKey)
+        });
+
+        if (!credential) {
+          throw new Error('Device authentication was cancelled.');
+        }
+
+        const verified = await api('/api/security/webauthn/transfer/verify', {
+          method: 'POST',
+          body: JSON.stringify({
+            challengeId: options.challengeId,
+            credential: vCredentialJSON(credential)
+          })
+        });
+
+        if (!verified?.verified || !verified?.authorizationId) {
+          throw new Error('Device authentication could not be verified.');
+        }
+
+        authorizationId = verified.authorizationId;
+
+      } else {
+        pin = document.getElementById('vTransferPin')?.value.trim();
+
+        if (!/^[0-9]{4}$/.test(pin || '')) {
+          return alert('PIN must be exactly 4 digits.');
+        }
+
+        renderProcessing(t, 0);
+        await new Promise(r => setTimeout(r, 900));
+      }
+
+      renderProcessing(t, 1);
+      await new Promise(r => setTimeout(r, 900));
+
+      const key = t.idempotencyKey ||
+        (crypto.randomUUID ? crypto.randomUUID() : uid());
+
+      t.idempotencyKey = key;
+
+      const body = {
+        recipientId: t.recipient.id,
+        amount: t.amount,
+        narration: t.note || ''
+      };
+
+      if (authorizationId) body.authorizationId = authorizationId;
+      else body.pin = pin;
+
+      renderProcessing(t, 2);
+
+      const d = await api('/api/transfers/internal', {
+        method: 'POST',
+        headers: {'Idempotency-Key': key},
+        body: JSON.stringify(body)
+      });
+
+      renderProcessing(t, 3);
+      await new Promise(r => setTimeout(r, 900));
+
+      const tx = d?.transaction;
+      const status = String(tx?.status || '').toUpperCase();
+
+      if (status === 'SUCCESS') {
+        try {
+          await loadState();
+        } catch (e) {
+          console.warn('Wallet refresh failed after successful transfer.', e);
+        }
+
+        document.getElementById('st3')?.classList.add('done');
+        document.getElementById('st3')?.classList.remove('active');
+
+        out.innerHTML = transferShell(
+          'Transfer complete',
+          'Your money has been successfully transferred.',
+          `
+          ${transferDetails(t)}
+          <div class="vtx-security">
+            <div class="v-success" style="margin-bottom:12px">✓</div>
+            <h3>Transaction successful</h3>
+            <p>Reference: ${esc(tx.reference || tx.id || 'Recorded')}</p>
+            <button class="btn primary full"
+              onclick="shareReceipt('${esc(tx.id)}')">View receipt</button>
+            <button class="btn soft full" style="margin-top:8px"
+              onclick="go('home')">Done</button>
+          </div>`
+        );
+
+      } else if (
+        ['PROCESSING','AUTHENTICATING','CREATED','PENDING'].includes(status)
+      ) {
+        out.innerHTML = transferShell(
+          'Transfer processing',
+          'The transfer has not yet reached final success.',
+          transferDetails(t) + `
+          <div class="notice">
+            <b>Status: ${esc(status)}</b>
+            <p>Check transaction history for the latest result before trying again.</p>
+          </div>
+          <button class="btn primary full" onclick="go('history')">
+            View transaction history
+          </button>`
+        );
+
+      } else {
+        throw new Error(
+          d?.message || `Transfer was not completed. Status: ${status || 'UNKNOWN'}`
+        );
+      }
+
+    } catch (e) {
+      out.innerHTML = transferShell(
+        'Transfer not confirmed',
+        'Veyra could not confirm completion of this transaction.',
+        transferDetails(t) + `
+        <div class="notice error">
+          <b>Transaction could not be completed.</b>
+          <p>${esc(e.message || 'Check transaction history before trying again.')}</p>
+        </div>
+        <button class="btn primary full" onclick="go('history')">
+          Check transaction history
+        </button>
+        <button class="btn outline full" style="margin-top:8px"
+          onclick="transferShowPin()">Return to authorization</button>`
+      );
+    }
+  };
+})();
+</script>
+
 </body>
 </html>
