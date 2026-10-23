@@ -180,7 +180,7 @@ function copyReceiptText(){if(window.__veyraReceiptText)navigator.clipboard?.wri
 function printReceipt(){const el=document.getElementById('receiptCard');if(!el)return;const w=window.open('','_blank','width=600,height=800');if(!w)return alert('Allow pop-ups to print or save as PDF.');w.document.write('<html><head><title>Veyra Receipt</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Arial;padding:24px;color:#171614}h2{font-size:28px}p{border-bottom:1px solid #ddd;padding:8px 0}small{color:#555}</style></head><body>'+el.innerHTML+'</body></html>');w.document.close();w.focus();setTimeout(()=>w.print(),300)}
 function downloadReceiptImage(){const d=window.__veyraReceiptData;if(!d)return;const escSvg=x=>String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1000"><rect width="100%" height="100%" fill="#171614"/><rect x="25" y="25" width="850" height="950" rx="28" fill="#1b1b1a" stroke="#c9a96e" stroke-width="3"/><text x="70" y="100" fill="#d9bd83" font-family="Arial" font-size="32" font-weight="bold">VEYRA</text><text x="70" y="200" fill="#f7f4ee" font-family="Arial" font-size="50" font-weight="bold">${escSvg(money(d.amount))}</text><text x="70" y="255" fill="#d9bd83" font-family="Arial" font-size="26">${escSvg(d.status)}</text><text x="70" y="350" fill="#b5afa3" font-family="Arial" font-size="20">REFERENCE</text><text x="70" y="390" fill="#f7f4ee" font-family="Arial" font-size="25">${escSvg(d.reference)}</text><text x="70" y="480" fill="#b5afa3" font-family="Arial" font-size="20">TYPE</text><text x="70" y="520" fill="#f7f4ee" font-family="Arial" font-size="25">${escSvg(d.type)}</text><text x="70" y="610" fill="#b5afa3" font-family="Arial" font-size="20">RECIPIENT</text><text x="70" y="650" fill="#f7f4ee" font-family="Arial" font-size="25">${escSvg(d.recipient)}</text><text x="70" y="740" fill="#b5afa3" font-family="Arial" font-size="20">DATE</text><text x="70" y="780" fill="#f7f4ee" font-family="Arial" font-size="22">${escSvg(d.date)}</text><text x="70" y="900" fill="#b5afa3" font-family="Arial" font-size="17">Keep this reference for support.</text></svg>`;const blob=new Blob([svg],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=900;canvas.height=1000;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);canvas.toBlob(async png=>{URL.revokeObjectURL(url);if(!png)return alert('Could not render receipt image.');const file=new File([png],'veyra-receipt-'+d.reference+'.png',{type:'image/png'});try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'Veyra receipt',text:'Transaction receipt '+d.reference});return}}catch(e){if(e?.name==='AbortError')return}const a=document.createElement('a');a.href=URL.createObjectURL(png);a.download='veyra-receipt-'+d.reference+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500)},'image/png')};img.onerror=()=>{URL.revokeObjectURL(url);alert('Could not render receipt image.')};img.src=url}
 function bindPage(page){const u=current();if(page==='history'){const render=()=>{const q=(document.getElementById('txSearch')?.value||'').toLowerCase(),f=document.getElementById('txFilter')?.value||'all';const a=state.tx.slice().reverse().filter(t=>(f==='all'||t.kind===f)&&JSON.stringify(t).toLowerCase().includes(q));document.getElementById('txList').innerHTML=a.length?a.map(txHtml).join(''):'<div class="empty">No matching transactions.</div>'};document.getElementById('txSearch').oninput=render;document.getElementById('txFilter').onchange=render;render()}
- if(page==='send'){const input=document.getElementById('recipientInput');input.oninput=()=>{clearTimeout(lookupTimer);lookupTimer=setTimeout(()=>lookupRecipient(input.value.trim()),350)};document.getElementById('sendForm').onsubmit=e=>{e.preventDefault();const d=new FormData(e.target);beginTransfer(String(d.get('recipient')).trim(),Number(d.get('amount')),String(d.get('note')||''))}}
+ if(page==='send'){const input=document.getElementById('recipientInput');const form=document.getElementById('sendForm');if(input&&form){input.oninput=()=>{clearTimeout(lookupTimer);lookupTimer=setTimeout(()=>lookupRecipient(input.value.trim()),350)};form.onsubmit=e=>{e.preventDefault();const d=new FormData(e.target);beginTransfer(String(d.get('recipient')).trim(),Number(d.get('amount')),String(d.get('note')||''))}}}
 }
 async function lookupRecipient(q){
  const box=document.getElementById('recipientLookup');
@@ -207,7 +207,11 @@ function selectVeyraRecipient(id,account,name){
  input.value=account;
  box.dataset.recipientId=id;
  box.dataset.name=name;
+ window.__vRecipient={id,accountNumber:account,firstName:name,lastName:'',username:''};
  box.innerHTML=`<div class="lookup-card"><b>${esc(name)}</b><span class="muted">Account ${esc(account)}</span><span class="tag">✓ Recipient selected</span></div>`;
+ if(document.getElementById('st1')&&document.getElementById('st2')&&document.getElementById('transferNext')){
+   window.transferStep2();
+ }
 }
 function openModal(html){const m=document.getElementById('modal');m.innerHTML=`<div class="modalbox">${html}</div>`;m.classList.add('open')}
 function closeModal(){document.getElementById('modal')?.classList.remove('open')}
@@ -292,7 +296,7 @@ function vTierInfo(){const n=vTierNo();return n===1?{name:'Basic',balance:500000
 function vPhoto(u){const p=vPhotos[u.id]||u.profileImageUrl;return p?`<div class="v-profile-photo home-photo"><img src="${p}" alt="Profile photo"></div>`:`<div class="v-profile-photo home-photo">${esc((u.firstName||u.name||'U')[0])}</div>`}
 async function copyAccount(){const a=String(current()?.account||'');if(!a)return;try{await navigator.clipboard.writeText(a);alert('Account number copied.')}catch{const t=document.createElement('textarea');t.value=a;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();alert('Account number copied.')}}
 function navHtml(){return [['home','⌂','Home'],['send','↗','Transfer'],['history','◷','Transactions'],['services','▦','Services'],['savings','⌁','Finance'],['cards','▭','Cards'],['loans','₦','Loan'],['profile','●','Me'],['settings','⚙','Settings']].map(x=>`<button class="navbtn" data-nav="${x[0]}">${x[1]} &nbsp; ${x[2]}</button>`).join('')}
-function pageHtml(page){if(page==='bank')return vBankPage();if(page==='gift')return vGiftPage();if(page==='upgrade')return vUpgradePage();if(page==='upgrade-basic')return vUpgradeDetail('BASIC');if(page==='upgrade-verified')return vUpgradeDetail('VERIFIED');if(page==='upgrade-premium')return vUpgradeDetail('PREMIUM');if(page==='premium')return vPremiumHubPage();if(page==='atm')return vAtmPage();if(page==='account')return vAccountPage();if(page==='fingerprint')return vFingerprintPage();const u=current();if(page==='home')return homeHtml(u);if(page==='send')return sendHtml(u);if(page==='history')return historyHtml(u);if(page==='services')return vServicesPage();if(page==='savings')return savingsHtml(u);if(page==='cards')return cardsHtml(u);if(page==='loans')return loansHtml(u);if(page==='beneficiaries')return beneficiariesHtml(u);if(page==='profile')return vProfilePage(u);if(page==='settings')return vSettingsPage(u);return ''}
+function pageHtml(page){if(page==='bank')return vBankPage();if(page==='gift')return vGiftPage();if(page==='upgrade')return vUpgradePage();if(page==='upgrade-basic')return vUpgradeDetail('BASIC');if(page==='upgrade-verified')return vUpgradeDetail('VERIFIED');if(page==='upgrade-premium')return vUpgradeDetail('PREMIUM');if(page==='premium')return vPremiumHubPage();if(page==='atm')return vAtmPage();if(page==='account')return vAccountPage();if(page==='fingerprint')return vFingerprintPage();const u=current();if(page==='home')return homeHtml(u);if(page==='send')return window.sendHtml();if(page==='history')return historyHtml(u);if(page==='services')return vServicesPage();if(page==='savings')return savingsHtml(u);if(page==='cards')return cardsHtml(u);if(page==='loans')return loansHtml(u);if(page==='beneficiaries')return beneficiariesHtml(u);if(page==='profile')return vProfilePage(u);if(page==='settings')return vSettingsPage(u);return ''}
 function homeHtml(u){const ti=vTierInfo(),bal=u.showBalance?money(u.balance):'••••••••',tx=state.tx.slice().reverse().slice(0,4);return `<section class="page active" id="page-home"><div class="home-head"><div class="home-identity" onclick="go('profile')">${vPhoto(u)}<div><div class="home-name">${esc(u.firstName||u.name)}</div><div class="home-handle">@${esc(u.username)}</div></div></div><button class="iconbtn" onclick="go('settings')">⚙</button></div><div class="hero v-wallet-card"><div class="wallet-top"><div><div class="eyebrow">Available balance</div><div class="balance">${bal}</div></div><button class="balance-eye" onclick="window.toggleBalance()">${u.showBalance?'◉':'○'}</button></div><div class="account-line"><span>Veyra account · ${esc(u.account)}</span><button class="copy-mini" onclick="copyAccount()">Copy</button></div></div><div class="main-actions"><button class="main-action" onclick="go('send')"><span class="action-icon">↗</span><b>To Veyra</b><small>Send to Veyra account</small></button><button class="main-action" onclick="go('bank')"><span class="action-icon">₦</span><b>To Bank</b><small>Send to a Nigerian bank</small></button></div><div class="section"><div class="row"><h2 class="title">Services</h2><button class="btn soft" onclick="go('services')">See all</button></div><div class="service-strip">${[['☎','Airtime',"serviceModal('Airtime')"],['◉','Data',"serviceModal('Data')"],['🎁','Gift',"go('gift')"],['▣','TV',"serviceModal('TV Bill')"],['ϟ','Electricity',"serviceModal('Electricity')"],['₦','Loan',"go('loans')"]].map(x=>`<button class="service-tile" onclick="${x[2]}"><span>${x[0]}</span><b>${x[1]}</b></button>`).join('')}</div></div><div class="v-list" style="margin-top:16px"><button class="v-row" onclick="go('account')"><div class="ri">▣</div><div class="rb"><b>Account details</b><div class="rs">${esc(u.account)} · ${ti.name} account</div></div><span class="v-arr">›</span></button><button class="v-row" onclick="go('profile')"><div class="ri">●</div><div class="rb"><b>Profile</b><div class="rs">Photo, name and identity</div></div><span class="v-arr">›</span></button></div><div class="card recent-card" style="margin-top:16px"><div class="row"><h3>Recent transactions</h3><button class="btn soft" onclick="go('history')">See all</button></div>${tx.length?tx.map(txHtml).join(''):'<div class="empty">No transactions yet.</div>'}</div></section>`}
 function sendHtml(u){return `<section class="page active" id="page-send"><h1 class="title">To Veyra</h1><p class="subtitle">Send money to another Veyra account.</p><div class="card transfer-card"><form id="sendForm"><div class="field"><label>Veyra username or account number</label><input id="recipientInput" name="recipient" inputmode="numeric" maxlength="10" required placeholder="Enter account number"><div id="recipientLookup" class="lookup"></div></div><div class="field"><label>Amount</label><input name="amount" type="number" min="1" step="0.01" required placeholder="₦0.00"></div><div class="field"><label>Description</label><input name="note" maxlength="140" placeholder="Optional"></div><button class="btn primary full" id="sendBtn">Continue</button></form></div></section>`}
 function vServicesPage(){return `<section class="page active" id="page-services"><h1 class="title">Services</h1><p class="subtitle">Everyday services inside Veyra.</p><div class="service-list">${[['☎','Airtime','Buy airtime',"serviceModal('Airtime')"],['◉','Data','Buy data',"serviceModal('Data')"],['🎁','Gift','Send a Veyra gift',"go('gift')"],['▣','TV','Pay TV',"serviceModal('TV Bill')"],['ϟ','Electricity','Pay electricity',"serviceModal('Electricity')"],['▤','Education','Education payment',"serviceModal('Education')"],['₦','Loan','Loan center',"go('loans')"],['⌁','Savings','Save money',"go('savings')"],['▭','Cards','Virtual card',"go('cards')"],['⚙','Settings','Security and preferences',"go('settings')"]].map(x=>`<button class="v-row service-row" onclick="${x[3]}"><div class="ri">${x[0]}</div><div class="rb"><b>${x[1]}</b><div class="rs">${x[2]}</div></div><span class="v-arr">›</span></button>`).join('')}</div></section>`}
@@ -341,9 +345,36 @@ function applyTheme(){const t=localStorage.getItem('veyra_theme')||'light';docum
 window.toggleTheme=function(){const t=(localStorage.getItem('veyra_theme')||'light')==='dark'?'light':'dark';localStorage.setItem('veyra_theme',t);applyTheme();if(token())go('settings')};applyTheme();
 function brandAvatar(){const u=current(),b=document.querySelector('.brandmark');if(!b)return;b.innerHTML=vPhotos?.[u.id]?`<img class="brand-photo" src="${vPhotos[u.id]}" alt="Profile">`:'V'}
 window.renderShell=function(){oldRenderShell();setTimeout(brandAvatar,0)};
-window.sendHtml=function(){return `<section class="page active" id="page-send"><h1 class="title">To Veyra</h1><p class="subtitle">Send money securely to another Veyra account.</p><div class="card"><div class="v-stepper"><div class="v-step active" id="st1"><div class="dot">1</div>Recipient</div><div class="v-step" id="st2"><div class="dot">2</div>Amount</div><div class="v-step" id="st3"><div class="dot">3</div>Confirm</div></div><div class="field"><label>Veyra username or account number</label><input id="recipientInput" autocomplete="off" placeholder="Enter username or account number"><div id="recipientLookup"></div></div><div id="transferNext"></div></div></section>`};
-window.bindTransferWizard=function(){const input=document.getElementById('recipientInput');if(!input)return;input.oninput=async()=>{const q=input.value.trim();window.__vRecipient=null;const lookupQ=q;const box=document.getElementById('recipientLookup');if(q.length<3){box.innerHTML='';return}box.innerHTML='<div class="notice">Checking Veyra account…</div>';try{const d=await api('/api/users/lookup?q='+encodeURIComponent(q));if(input.value.trim()!==lookupQ)return;const r=d.recipient;if(!r||!r.id)throw new Error("Recipient not found.");window.__vRecipient=r;box.innerHTML=`<div class="lookup-card" role="button" tabindex="0" style="cursor:pointer" onclick="transferStep2()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();transferStep2()}"><b>${esc(r.firstName+' '+r.lastName)}</b><div class="muted">${esc(r.accountNumber)} · @${esc(r.username)}</div><div class="small">Tap to continue</div></div><div class="v-alias"><div class="field"><label>Recipient label (optional)</label><input id="recipientAlias" maxlength="24" placeholder="e.g. BB2"></div><button class="btn soft" style="margin-bottom:13px" onclick="transferStep2()">Continue</button></div>`}catch(e){box.innerHTML=`<div class="notice error">${esc(e.message||'Veyra account not found.')}</div>`}}};
-window.transferStep2=function(){const r=window.__vRecipient;if(!r)return;document.getElementById('st1').classList.add('done');document.getElementById('st1').classList.remove('active');document.getElementById('st2').classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};document.getElementById('transferNext').innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
+window.sendHtml=function(){return `<section class="page active" id="page-send"><h1 class="title">To Veyra</h1><p class="subtitle">Send money securely to another Veyra account.</p><div class="card"><div class="v-stepper"><div class="v-step active" id="st1"><div class="dot">1</div>Recipient</div><div class="v-step" id="st2"><div class="dot">2</div>Amount</div><div class="v-step" id="st3"><div class="dot">3</div>Confirm</div></div><div class="field"><label>Veyra account number</label><input id="recipientInput" type="text" inputmode="numeric" autocomplete="off" placeholder="Enter recipient account number"><div id="recipientLookup"></div></div><div id="transferNext"></div></div></section>`};
+window.bindTransferWizard=function(){
+ const input=document.getElementById('recipientInput');
+ if(!input)return;
+ input.oninput=async()=>{
+  const q=input.value.trim();
+  window.__vRecipient=null;
+  const box=document.getElementById('recipientLookup');
+  if(!/^\\d+$/.test(q)){
+   box.innerHTML=q?'<div class="notice error">Enter the recipient account number using digits only.</div>':'';
+   return;
+  }
+  if(q.length<3){box.innerHTML='';return}
+  box.innerHTML='<div class="notice">Verifying account number…</div>';
+  try{
+   const d=await api('/api/users/lookup?q='+encodeURIComponent(q));
+   if(input.value.trim()!==q)return;
+   const r=d.recipient;
+   if(!r||!r.id||String(r.accountNumber)!==q)
+    throw new Error('No matching Veyra account number was found.');
+   window.__vRecipient=r;
+   box.innerHTML='<div class="notice">Recipient verified. Continuing…</div>';
+   window.transferStep2();
+  }catch(e){
+   if(input.value.trim()!==q)return;
+   window.__vRecipient=null;
+   box.innerHTML=`<div class="notice error">${esc(e.message||'Account lookup failed.')}</div>`;
+  }
+ };
+};window.transferStep2=function(){const r=window.__vRecipient;if(!r)return alert('Select a verified Veyra recipient first.');const st1=document.getElementById('st1'),st2=document.getElementById('st2'),next=document.getElementById('transferNext');if(!st1||!st2||!next)return alert('Transfer form is not ready. Please reopen To Veyra and try again.');st1.classList.add('done');st1.classList.remove('active');st2.classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};next.innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
 window.transferStep3=function(){const amount=Number(document.getElementById('vTransferAmount')?.value),note=(document.getElementById('vTransferNote')?.value||'').trim(),senderId=(document.getElementById('vTransferSenderId')?.value||'').trim();if(!amount||amount<=0)return alert('Enter a valid amount.');if(amount>current().balance)return alert('Insufficient balance.');window.__vTransfer.amount=amount;window.__vTransfer.note=note;window.__vTransfer.senderId=senderId;document.getElementById('st2').classList.add('done');document.getElementById('st2').classList.remove('active');document.getElementById('st3').classList.add('active');const r=window.__vTransfer.recipient;document.getElementById('transferNext').innerHTML=`<div class="v-confirm v-stage"><div class="v-confirm-row"><span>Recipient</span><b>${esc(r.firstName+' '+r.lastName)}</b></div><div class="v-confirm-row"><span>Account</span><b>${esc(r.accountNumber)}</b></div><div class="v-confirm-row"><span>Amount</span><b>${money(amount)}</b></div><div class="v-confirm-row"><span>Recipient label</span><b>${esc(window.__vTransfer.alias||'None')}</b></div></div><div class="field"><label>Transaction PIN</label><input id="vTransferPin" class="v-pin" inputmode="numeric" maxlength="4" placeholder="••••"></div><button class="btn primary full" onclick="performVTransfer()">Send money</button>`};
 window.performVTransfer=async function(){const p=document.getElementById('vTransferPin')?.value.trim();if(!/^[0-9]{4}$/.test(p||''))return alert('PIN must be exactly 4 digits.');const t=window.__vTransfer;document.getElementById('transferNext').innerHTML='<div class="v-processing v-stage"><div class="v-spinner"></div><h3>Processing transfer</h3><p class="muted">Please wait while Veyra completes the transfer.</p></div>';try{await api('/api/transfers/internal',{method:'POST',headers:{'Idempotency-Key':uid()},body:JSON.stringify({recipientId:t.recipient.id,amount:t.amount,narration:t.note||undefined,pin:p,recipientAlias:t.alias||undefined,senderId:t.senderId||undefined})});await loadState();document.getElementById('st3').classList.add('done');document.getElementById('st3').classList.remove('active');document.getElementById('transferNext').innerHTML=`<div class="v-processing"><div class="v-success">✓</div><h3>Transfer successful</h3><p>${money(t.amount)} sent to ${esc(t.recipient.firstName+' '+t.recipient.lastName)}.</p><button class="btn primary full" onclick="go('home')">Done</button></div>`}catch(e){document.getElementById('transferNext').innerHTML=`<div class="notice error">${esc(e.message||'Transfer failed.')}</div><button class="btn outline full" onclick="go('send')">Try again</button>`}};
 const oldServiceModal=window.serviceModal;window.serviceModal=function(type){if(type==='Airtime')return airtimeUI();if(type==='Data')return dataUI();return oldServiceModal(type)};
@@ -480,7 +511,7 @@ if(token()){renderShell();go('home')}
     currency:'NGN',
     accountNumber:a.accountNumber,
     bankCode:selectedPaystackBank.code,
-    bankName:v.bankName,
+    bankName:(v.bankName||v.bank||selectedPaystackBank.name),
     accountName:v.accountName,
     amount,
     narration:note||'Veyra bank transfer',
@@ -663,7 +694,7 @@ window.transferShowPin=function(){
   <button class="btn outline full" style="margin-top:8px" onclick="go('home')">Done</button>`;
  }
 };
-window.transferStep2=function(){const r=window.__vRecipient;if(!r)return;document.getElementById('st1').classList.add('done');document.getElementById('st1').classList.remove('active');document.getElementById('st2').classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};document.getElementById('transferNext').innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
+window.transferStep2=function(){const r=window.__vRecipient;if(!r)return alert('Select a verified Veyra recipient first.');const st1=document.getElementById('st1'),st2=document.getElementById('st2'),next=document.getElementById('transferNext');if(!st1||!st2||!next)return alert('Transfer form is not ready. Please reopen To Veyra and try again.');st1.classList.add('done');st1.classList.remove('active');st2.classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};next.innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
   window.shareReceipt=async function(id){
  try{
   const d=await api('/api/transactions/'+encodeURIComponent(id)+'/receipt'),r=d.receipt;
@@ -708,5 +739,161 @@ window.printReceipt=function(){const el=document.getElementById('receiptCard');i
   window.vBankPage && setTimeout(()=>{if(token()){}},0);
 })();
 </script>
+
+<script>
+/* VEYRA_TRANSFER_BIOMETRIC_V1 */
+window.transferShowPin = function () {
+  const t = window.__vTransfer;
+  const out = document.getElementById('transferNext');
+  if (!t || !t.recipient || !out) {
+    alert('Transfer details are missing. Please start again.');
+    return;
+  }
+
+  out.innerHTML = `
+    <div class="v-confirm v-stage">
+      <h3>Authorize transfer</h3>
+      <div class="v-confirm-row"><span>Recipient</span><b>${esc(t.recipient.firstName+' '+t.recipient.lastName)}</b></div>
+      <div class="v-confirm-row"><span>Account</span><b>${esc(t.recipient.accountNumber)}</b></div>
+      <div class="v-confirm-row"><span>Amount</span><b>${money(t.amount)}</b></div>
+    </div>
+    <div class="field">
+      <label>Transaction PIN</label>
+      <input id="vTransferPin" class="v-pin" inputmode="numeric"
+        maxlength="4" autocomplete="off" placeholder="••••">
+    </div>
+    <button class="btn primary full" onclick="performVTransfer('pin')">Confirm with PIN</button>
+    <button class="btn outline full" style="margin-top:8px"
+      onclick="performVTransfer('biometric')">Use fingerprint / device authentication</button>
+    <p class="muted">Your device may request a fingerprint or its screen-lock method.</p>`;
+};
+
+window.performVTransfer = async function (mode = 'pin') {
+  const t = window.__vTransfer;
+  const out = document.getElementById('transferNext');
+
+  if (!t || !t.recipient || !out) {
+    alert('Transfer details are missing. Please start again.');
+    return;
+  }
+
+  let pin;
+  let authorizationId;
+
+  const showStage = (title, message) => {
+    out.innerHTML = `<div class="v-processing v-stage">
+      <div class="v-spinner"></div><h3>${title}</h3>
+      <p class="muted">${message}</p></div>`;
+  };
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  try {
+    if (mode === 'biometric') {
+      if (!window.PublicKeyCredential || !navigator.credentials?.get) {
+        throw new Error('This browser does not support device authentication. Use your transaction PIN.');
+      }
+
+      showStage('Authenticating', 'Requesting secure device authentication.');
+      const options = await api('/api/security/webauthn/transfer/options', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'INTERNAL_TRANSFER',
+          recipientId: String(t.recipient.id),
+          amount: t.amount,
+          narration: t.note || ''
+        })
+      });
+
+      if (!options?.challengeId || !options?.publicKey) {
+        throw new Error('The server did not return a valid authentication challenge.');
+      }
+
+      const credential = await navigator.credentials.get({
+        publicKey: vPublicKeyOptions(options.publicKey)
+      });
+
+      if (!credential) throw new Error('Device authentication was cancelled.');
+
+      const verified = await api('/api/security/webauthn/transfer/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          challengeId: options.challengeId,
+          credential: vCredentialJSON(credential)
+        })
+      });
+
+      if (!verified?.verified || !verified?.authorizationId) {
+        throw new Error('Device authentication could not be verified.');
+      }
+      authorizationId = verified.authorizationId;
+    } else {
+      pin = document.getElementById('vTransferPin')?.value.trim();
+      if (!/^[0-9]{4}$/.test(pin || '')) {
+        return alert('PIN must be exactly 4 digits.');
+      }
+      showStage('Authenticating', 'Verifying your transaction PIN securely.');
+      await wait(500);
+    }
+
+    showStage('Initializing transaction', 'Preparing your transfer request.');
+    await wait(500);
+
+    const key = t.idempotencyKey || (crypto.randomUUID
+      ? crypto.randomUUID() : uid());
+    t.idempotencyKey = key;
+
+    showStage('Processing payment', 'Submitting the transfer securely.');
+    const body = {
+      recipientId: t.recipient.id,
+      amount: t.amount,
+      narration: t.note || undefined
+    };
+    if (authorizationId) body.authorizationId = authorizationId;
+    else body.pin = pin;
+
+    const d = await api('/api/transfers/internal', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify(body)
+    });
+
+    const tx = d?.transaction;
+    const status = String(tx?.status || '').toUpperCase();
+
+    showStage('Processing receipt', 'Checking the recorded transaction status.');
+    await wait(500);
+
+    if (status === 'SUCCESS') {
+      try { await loadState(); }
+      catch (e) { console.warn('Transfer succeeded but wallet refresh failed.', e); }
+
+      document.getElementById('st3')?.classList.add('done');
+      document.getElementById('st3')?.classList.remove('active');
+
+      out.innerHTML = `<div class="v-processing">
+        <div class="v-success">✓</div><h3>Transfer succeeded</h3>
+        <p>${money(t.amount)} sent to ${esc(t.recipient.firstName+' '+t.recipient.lastName)}.</p>
+        <p class="muted">Reference: ${esc(tx.reference || tx.id || 'Recorded')}</p>
+        <button class="btn primary full" onclick="shareReceipt('${esc(tx.id)}')">View receipt</button>
+        <button class="btn soft full" style="margin-top:8px" onclick="go('home')">Done</button>
+      </div>`;
+    } else if (['PROCESSING', 'AUTHENTICATING', 'CREATED'].includes(status)) {
+      out.innerHTML = `<div class="notice"><b>Transfer is still processing</b>
+        <p>Success has not been confirmed. Check transaction history before trying again.</p></div>
+        <button class="btn primary full" onclick="go('history')">View transaction history</button>`;
+    } else {
+      out.innerHTML = `<div class="notice error"><b>Transfer was not completed</b>
+        <p>Recorded status: ${esc(status || 'Unknown')}</p></div>
+        <button class="btn outline full" onclick="go('send')">Return to transfers</button>`;
+    }
+  } catch (e) {
+    out.innerHTML = `<div class="notice error"><b>Transfer not confirmed</b>
+      <p>${esc(e.message || 'Check transaction history before retrying.')}</p></div>
+      <button class="btn primary full" onclick="go('history')">Check transaction history</button>
+      <button class="btn outline full" style="margin-top:8px" onclick="transferShowPin()">Back to authorization</button>`;
+  }
+};
+</script>
+
 </body>
 </html>
