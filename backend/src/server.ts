@@ -363,6 +363,28 @@ app.get("/api/users/lookup", requireAuth, asyncRoute(async (req: any, res: any) 
   res.json({ success: true, recipient: user });
 }));
 
+app.get("/api/transfers/internal/recipient-history", requireAuth, asyncRoute(async (req: any, res: any) => {
+  const recipientId = String(req.query.recipientId || "").trim();
+  if (!recipientId) {
+    return res.status(400).json({ success: false, code: "RECIPIENT_REQUIRED" });
+  }
+  if (recipientId === req.userId) {
+    return res.status(400).json({ success: false, code: "SELF_TRANSFER" });
+  }
+
+  const prior = await prisma.transaction.findFirst({
+    where: {
+      senderId: req.userId,
+      receiverId: recipientId,
+      status: "SUCCESS",
+      type: "INTERNAL_TRANSFER"
+    },
+    select: { id: true }
+  });
+
+  res.json({ success: true, hasPriorSuccessfulTransfer: Boolean(prior) });
+}));
+
 app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
   const body = z.object({
     recipientId: z.string(),
@@ -417,7 +439,7 @@ app.get("/api/transactions/:id/receipt", requireAuth, asyncRoute(async (req: any
   });
   if (!transaction) return res.status(404).json({ success: false, code: "RECEIPT_NOT_FOUND", message: "Transaction receipt not found." });
   res.json({ success: true, receipt: { reference: transaction.reference, status: transaction.status, type: transaction.type,
-    amount: transaction.amount.toString(), fee: transaction.fee.toString(), total: transaction.total.toString(), currency: "NGN",
+    amount: transaction.amount.toString(), fee: transaction.fee.toString(), total: transaction.total.toString(), currency: String((transaction.metadata as any)?.currency || "NGN"),
     recipientName: transaction.recipientName, recipientAccount: transaction.recipientAccount, recipientBank: transaction.recipientBank,
     narration: transaction.narration, createdAt: transaction.createdAt, completedAt: transaction.completedAt,
     simulated: Boolean((transaction.metadata as any)?.simulated), bankCreditRecorded: Boolean((transaction.metadata as any)?.bankCreditRecorded),
@@ -437,7 +459,7 @@ app.get("/api/receipts/:reference", requireAuth, asyncRoute(async (req: any, res
   const transactionRef = requested.replace(/-[SR]$/, "");
   const transaction = await prisma.transaction.findFirst({ where: { reference: transactionRef, OR: [{ senderId: req.userId }, { receiverId: req.userId }] }, include: { sender: { select: { firstName: true, lastName: true, accountNumber: true } }, receiver: { select: { firstName: true, lastName: true, accountNumber: true } } } });
   if (!transaction) return res.status(404).json({ success: false, code: "RECEIPT_NOT_FOUND", message: "No receipt was found for this reference." });
-  res.json({ success: true, receipt: { reference: transaction.reference, status: transaction.status, kind: transaction.type === "BANK_TRANSFER" ? "BANK_TRANSFER" : "VEYRA_TRANSFER", snapshot: { reference: transaction.reference, status: transaction.status, amount: transaction.amount.toFixed(2), currency: "NGN", type: transaction.type, recipientName: transaction.recipientName, recipientAccount: transaction.recipientAccount, recipientBank: transaction.recipientBank, createdAt: transaction.createdAt.toISOString(), completedAt: transaction.completedAt?.toISOString() || null, simulated: Boolean((transaction.metadata as any)?.simulated), sender: transaction.sender, receiver: transaction.receiver } } });
+  res.json({ success: true, receipt: { reference: transaction.reference, status: transaction.status, kind: transaction.type === "BANK_TRANSFER" ? "BANK_TRANSFER" : "VEYRA_TRANSFER", snapshot: { reference: transaction.reference, status: transaction.status, amount: transaction.amount.toFixed(2), currency: String((transaction.metadata as any)?.currency || "NGN"), type: transaction.type, recipientName: transaction.recipientName, recipientAccount: transaction.recipientAccount, recipientBank: transaction.recipientBank, createdAt: transaction.createdAt.toISOString(), completedAt: transaction.completedAt?.toISOString() || null, simulated: Boolean((transaction.metadata as any)?.simulated), sender: transaction.sender, receiver: transaction.receiver } } });
 }));
 
 app.patch("/api/profile", requireAuth, authLimiter, asyncRoute(async (req: any, res: any) => {

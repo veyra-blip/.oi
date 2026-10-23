@@ -422,12 +422,187 @@ if(token()){renderShell();go('home')}
   window.resolvePaystackAccount=async function(acc){const out=document.getElementById('bankResolveResult');if(!out||!selectedPaystackBank)return;try{const d=await api('/api/banks/resolve?accountNumber='+encodeURIComponent(acc)+'&bankCode='+encodeURIComponent(selectedPaystackBank.code));const a=d.account;window.__vBankRecipient=a;out.innerHTML=`<div class="verified-account"><div class="verified-mark">✓</div><div><b>${esc(a.accountName)}</b><div class="muted">${esc(a.accountNumber)} · ${esc(a.bank||selectedPaystackBank.name)}</div><span class="tag">Account name verified</span></div></div><div class="field"><label>Amount</label><input id="bankAmt" type="number" min="1" inputmode="decimal" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="bankNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="vExternalSend()">Confirm recipient</button>`}catch(e){out.innerHTML=`<div class="notice error">${esc(e.message||'Could not find this account name.')}</div>`}};
   window.vExternalSend=function(){const a=window.__vBankRecipient;if(!a)return alert('Find and confirm the account name first.');const amount=Number(document.getElementById('bankAmt')?.value),note=(document.getElementById('bankNote')?.value||'').trim();if(!amount||amount<=0)return alert('Enter a valid amount.');if(amount>current().balance)return alert('Insufficient balance.');openModal(`<div class="modalhead"><h2>Confirm bank transfer</h2><button class="close" onclick="closeModal()">×</button></div><div class="v-confirm v-stage"><div class="v-confirm-row"><span>Bank</span><b>${esc(a.bank||selectedPaystackBank.name)}</b></div><div class="v-confirm-row"><span>Account</span><b>${esc(a.accountNumber)}</b></div><div class="v-confirm-row"><span>Account name</span><b>${esc(a.accountName)}</b></div><div class="v-confirm-row"><span>Amount</span><b>${money(amount)}</b></div></div><div class="field"><label>Transaction PIN</label><input id="bankPin" class="v-pin" inputmode="numeric" maxlength="4" placeholder="••••"></div><button class="btn primary full" onclick="performBankTransfer()">Transfer</button>`,true)};
   window.performBankTransfer=async function(){const a=window.__vBankRecipient,pin=document.getElementById('bankPin')?.value.trim(),amount=Number(document.getElementById('bankAmt')?.value),note=(document.getElementById('bankNote')?.value||'').trim();if(!a||!/^[0-9]{4}$/.test(pin||''))return alert('Enter your 4-digit transaction PIN.');const key=crypto.randomUUID?crypto.randomUUID():('veyra-'+Date.now()+'-'+Math.random().toString(16).slice(2));const box=document.querySelector('.modalbox');if(box)box.innerHTML='<div class="v-processing v-stage"><div class="v-spinner"></div><h3>Confirming bank transfer</h3><p class="muted">Checking recipient, PIN and transaction ledger.</p></div>';try{const d=await api('/api/providers/bank-transfer',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({countryCode:'NG',currency:'NGN',accountNumber:a.accountNumber,bankCode:selectedPaystackBank.code,bankName:a.bank||selectedPaystackBank.name,accountName:a.accountName,amount,narration:note||'Veyra bank transfer',pin})});await loadState();closeModal();setTimeout(()=>shareReceipt(d.transactionId),120)}catch(e){if(box)box.innerHTML='<div class="notice error v-stage">'+esc(e.message||'Bank transfer failed.')+'</div><button class="btn outline full" onclick="closeModal()">Close</button>'}};
-  window.transferStep3=function(){const amount=Number(document.getElementById('vTransferAmount')?.value),note=(document.getElementById('vTransferNote')?.value||'').trim();if(!amount||amount<=0)return alert('Enter a valid amount.');if(amount>current().balance)return alert('Insufficient balance.');window.__vTransfer.amount=amount;window.__vTransfer.note=note;document.getElementById('st2').classList.add('done');document.getElementById('st2').classList.remove('active');document.getElementById('st3').classList.add('active');const r=window.__vTransfer.recipient;document.getElementById('transferNext').innerHTML=`<div class="v-confirm v-stage"><div class="v-confirm-row"><span>Recipient</span><b>${esc(r.firstName+' '+r.lastName)}</b></div><div class="v-confirm-row"><span>Account</span><b>${esc(r.accountNumber)}</b></div><div class="v-confirm-row"><span>Amount</span><b>${money(amount)}</b></div></div><div class="field"><label>Transaction PIN</label><input id="vTransferPin" class="v-pin" inputmode="numeric" maxlength="4" placeholder="••••"></div><button class="btn primary full" onclick="performVTransfer()">Send money</button>`};
-  window.performVTransfer=async function(){const p=document.getElementById('vTransferPin')?.value.trim();if(!/^[0-9]{4}$/.test(p||''))return alert('PIN must be exactly 4 digits.');const t=window.__vTransfer;document.getElementById('transferNext').innerHTML='<div class="v-processing v-stage"><div class="v-spinner"></div><h3>Processing transfer</h3><p class="muted">Please wait while Veyra completes the transfer.</p></div>';try{const d=await api('/api/transfers/internal',{method:'POST',headers:{'Idempotency-Key':(crypto.randomUUID?crypto.randomUUID():uid())},body:JSON.stringify({recipientId:t.recipient.id,amount:t.amount,narration:t.note||undefined,pin:p})});await loadState();document.getElementById('st3').classList.add('done');document.getElementById('st3').classList.remove('active');document.getElementById('transferNext').innerHTML=`<div class="v-processing"><div class="v-success">✓</div><h3>Transfer successful</h3><p>${money(t.amount)} sent to ${esc(t.recipient.firstName+' '+t.recipient.lastName)}.</p><button class="btn primary full" onclick="shareReceipt('${esc(d.transaction.id)}')">View receipt</button></div>`}catch(e){document.getElementById('transferNext').innerHTML=`<div class="notice error">${esc(e.message||'Transfer failed.')}</div><button class="btn outline full" onclick="go('send')">Try again</button>`}};
-  window.transferStep2=function(){const r=window.__vRecipient;if(!r)return;document.getElementById('st1').classList.add('done');document.getElementById('st1').classList.remove('active');document.getElementById('st2').classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};document.getElementById('transferNext').innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
-  window.shareReceipt=async function(id){try{const d=await api('/api/transactions/'+encodeURIComponent(id)+'/receipt'),r=d.receipt;if(!r)throw new Error('Receipt not found');const amount=Number(r.amount),date=new Date(r.createdAt).toLocaleString(),isBank=r.type==='BANK_TRANSFER',simulated=Boolean(r.simulated);const title=isBank?'Bank transfer receipt':'Veyra transfer receipt';const recipient=r.recipientName||r.receiver?.firstName&&`${r.receiver.firstName} ${r.receiver.lastName}`||'Veyra account';const account=r.recipientAccount||r.receiver?.accountNumber||'—';const bank=r.recipientBank||'Veyra';const details=`VEYRA RECEIPT\n${isBank?'Bank Transfer':'Veyra Transfer'}\nReference: ${r.reference}\nStatus: ${r.status}\nAmount: ${r.currency||'NGN'} ${amount.toLocaleString()}\nRecipient: ${recipient}\nAccount: ${account}\nBank: ${bank}\nDate: ${date}`;openModal(`<div class="modalhead"><h2>${title}</h2><button class="close" onclick="closeModal()">×</button></div><div id="receiptCard" class="card" style="position:relative;background:#171614;color:#f7f4ee;border:1px solid #c9a96e;padding:24px;overflow:hidden"><div style="letter-spacing:3px;color:#d9bd83;font-weight:900;font-size:18px">VEYRA</div><h2 style="margin:18px 0 5px;font-size:30px">${money(amount)}</h2><div style="color:#d9bd83;font-weight:800;letter-spacing:.5px">${esc(r.status)}</div><hr style="border-color:#494238;margin:18px 0"><p>Transaction type<br><b>${isBank?'Bank Transfer':'Veyra Transfer'}</b></p><p>Reference<br><b>${esc(r.reference)}</b></p><p>Recipient<br><b>${esc(recipient)}</b></p><p>Account<br><b>${esc(account)}</b></p><p>Bank<br><b>${esc(bank)}</b></p><p>Date<br><b>${esc(date)}</b></p><p>Amount<br><b>${money(amount)}</b></p>${simulated&&isBank?'<div style="position:absolute;right:10px;bottom:7px;font-size:7px;letter-spacing:1.5px;opacity:.42;color:#d9bd83">SIMULATED</div>':''}</div><div class="actions" style="margin-top:14px"><button class="btn primary" onclick="printReceipt()">Save PDF / Print</button><button class="btn soft" onclick="downloadReceiptImage()">Save image</button><button class="btn soft" onclick="copyReceiptText()">Copy details</button></div><textarea id="receiptText" class="hidden">${esc(details)}</textarea>`,true);window.__veyraReceiptText=details;window.__veyraReceiptData={amount,reference:r.reference,status:r.status,type:isBank?'Bank Transfer':'Veyra Transfer',recipient,date,account,bank,simulated:isBank&&simulated}}catch(e){alert(e.message||'Could not load receipt.')}};
-  window.downloadReceiptImage=function(){const d=window.__veyraReceiptData;if(!d)return;const x=v=>String(v).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1100"><rect width="100%" height="100%" fill="#171614"/><rect x="25" y="25" width="850" height="1050" rx="28" fill="#1b1b1a" stroke="#c9a96e" stroke-width="3"/><text x="70" y="105" fill="#d9bd83" font-family="Arial" font-size="32" font-weight="bold">VEYRA</text><text x="70" y="175" fill="#f7f4ee" font-family="Arial" font-size="26" font-weight="bold">${x(d.type)}</text><text x="70" y="250" fill="#f7f4ee" font-family="Arial" font-size="50" font-weight="bold">${x(money(d.amount))}</text><text x="70" y="305" fill="#d9bd83" font-family="Arial" font-size="25">${x(d.status)}</text><text x="70" y="395" fill="#b5afa3" font-family="Arial" font-size="19">REFERENCE</text><text x="70" y="430" fill="#f7f4ee" font-family="Arial" font-size="23">${x(d.reference)}</text><text x="70" y="510" fill="#b5afa3" font-family="Arial" font-size="19">RECIPIENT</text><text x="70" y="545" fill="#f7f4ee" font-family="Arial" font-size="23">${x(d.recipient)}</text><text x="70" y="625" fill="#b5afa3" font-family="Arial" font-size="19">ACCOUNT</text><text x="70" y="660" fill="#f7f4ee" font-family="Arial" font-size="23">${x(d.account)}</text><text x="70" y="740" fill="#b5afa3" font-family="Arial" font-size="19">BANK</text><text x="70" y="775" fill="#f7f4ee" font-family="Arial" font-size="23">${x(d.bank)}</text><text x="70" y="855" fill="#b5afa3" font-family="Arial" font-size="19">DATE</text><text x="70" y="890" fill="#f7f4ee" font-family="Arial" font-size="21">${x(d.date)}</text>${d.simulated?'<text x="825" y="1050" text-anchor="end" fill="#d9bd83" opacity=".45" font-family="Arial" font-size="8" letter-spacing="2">SIMULATED</text>':''}</svg>`;const blob=new Blob([svg],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),img=new Image();img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=900;canvas.height=1100;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);canvas.toBlob(async png=>{URL.revokeObjectURL(url);if(!png)return;const file=new File([png],'veyra-receipt-'+d.reference+'.png',{type:'image/png'});try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'Veyra receipt'});return}}catch(e){if(e?.name==='AbortError')return}const a=document.createElement('a');a.href=URL.createObjectURL(png);a.download='veyra-receipt-'+d.reference+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500)},'image/png')};img.src=url};
-  window.printReceipt=function(){const el=document.getElementById('receiptCard');if(!el)return;const w=window.open('','_blank','width=600,height=900');if(!w)return alert('Allow pop-ups to print or save as PDF.');w.document.write('<html><head><title>Veyra Receipt</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Arial;padding:24px;color:#171614}p{border-bottom:1px solid #ddd;padding:8px 0}small{color:#555}</style></head><body>'+el.outerHTML+'</body></html>');w.document.close();w.focus();setTimeout(()=>w.print(),300)};
+  window.transferStep3=function(){
+ const amount=Number(document.getElementById('vTransferAmount')?.value);
+ const note=(document.getElementById('vTransferNote')?.value||'').trim();
+ if(!amount||amount<=0)return alert('Enter a valid amount.');
+ if(amount>current().balance)return alert('Insufficient balance.');
+ const t=window.__vTransfer;
+ if(!t||!t.recipient)return alert('Please select a recipient again.');
+ t.amount=amount;
+ t.note=note;
+ const r=t.recipient;
+ document.getElementById('st2')?.classList.add('done');
+ document.getElementById('st2')?.classList.remove('active');
+ document.getElementById('st3')?.classList.add('active');
+ document.getElementById('transferNext').innerHTML=
+ `<div class="v-confirm v-stage">
+   <h3>Confirm recipient</h3>
+   <p>Please check that this is the correct recipient before continuing.</p>
+   <div class="v-confirm-row"><span>Recipient name</span><b>${esc(r.firstName+' '+r.lastName)}</b></div>
+   <div class="v-confirm-row"><span>Account number</span><b>${esc(r.accountNumber)}</b></div>
+   <div class="v-confirm-row"><span>Username</span><b>@${esc(r.username||'—')}</b></div>
+ </div>
+ <button class="btn primary full" onclick="transferConfirmRecipient()">Yes, this is the correct recipient</button>
+ <button class="btn outline full" style="margin-top:8px" onclick="go('send')">Cancel transfer</button>`;
+};
+window.transferConfirmRecipient=function(){
+ const t=window.__vTransfer;
+ if(!t||!t.recipient)return alert('Recipient details are missing. Please start again.');
+ const r=t.recipient;
+ document.getElementById('transferNext').innerHTML=
+ `<div class="v-confirm v-stage">
+   <h3>Review transfer</h3>
+   <div class="v-confirm-row"><span>Recipient</span><b>${esc(r.firstName+' '+r.lastName)}</b></div>
+   <div class="v-confirm-row"><span>Account number</span><b>${esc(r.accountNumber)}</b></div>
+   <div class="v-confirm-row"><span>Amount</span><b>${money(t.amount)}</b></div>
+   <div class="v-confirm-row"><span>Description</span><b>${esc(t.note||'None')}</b></div>
+ </div>
+ <p class="muted">Review every detail before authorizing this transfer.</p>
+ <button class="btn primary full" onclick="transferCheckFirstTime()">Continue to security check</button>
+ <button class="btn outline full" style="margin-top:8px" onclick="go('send')">Cancel transfer</button>`;
+};
+window.transferCheckFirstTime=async function(){
+ const t=window.__vTransfer;
+ if(!t||!t.recipient)return alert('Transfer details are missing. Please start again.');
+ const out=document.getElementById('transferNext');
+ out.innerHTML='<div class="v-processing v-stage"><div class="v-spinner"></div><h3>Checking recipient history</h3><p class="muted">Checking your previous transfers before authorization.</p></div>';
+ try{
+  const d=await api('/api/transfers/internal/recipient-history?recipientId='+encodeURIComponent(t.recipient.id));
+  const prior=d?.hasPriorSuccessfulTransfer===true;
+  if(!prior){
+   out.innerHTML=`<div class="notice"><b>First transfer to this account</b><p>This is the first time you are making a transaction to this account. If you are sure the account details are correct, proceed.</p></div>
+   <button class="btn primary full" onclick="transferShowPin()">Proceed</button>
+   <button class="btn outline full" style="margin-top:8px" onclick="go('send')">Cancel transfer</button>`;
+  }else{
+   transferShowPin();
+  }
+ }catch(e){
+  out.innerHTML=`<div class="notice error"><b>Could not verify recipient history</b><p>${esc(e.message||'Please try again.')}</p></div><button class="btn outline full" onclick="transferConfirmRecipient()">Back to review</button>`;
+ }
+};
+window.transferShowPin=function(){
+ const t=window.__vTransfer;
+ if(!t||!t.recipient)return alert('Transfer details are missing. Please start again.');
+ document.getElementById('transferNext').innerHTML=
+ `<div class="v-confirm v-stage">
+   <h3>Authorize transfer</h3>
+   <div class="v-confirm-row"><span>Recipient</span><b>${esc(t.recipient.firstName+' '+t.recipient.lastName)}</b></div>
+   <div class="v-confirm-row"><span>Amount</span><b>${money(t.amount)}</b></div>
+ </div>
+ <div class="field"><label>Transaction PIN</label><input id="vTransferPin" class="v-pin" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••"></div>
+ <button class="btn primary full" onclick="performVTransfer()">Confirm and send</button>`;
+};window.performVTransfer=async function(){
+ const pin=document.getElementById('vTransferPin')?.value.trim();
+ if(!/^[0-9]{4}$/.test(pin||''))return alert('PIN must be exactly 4 digits.');
+
+ const t=window.__vTransfer;
+ const out=document.getElementById('transferNext');
+ if(!t||!t.recipient||!out)return alert('Transfer details are missing. Please start again.');
+
+ const showStage=(title,message)=>{
+  out.innerHTML=`<div class="v-processing v-stage"><div class="v-spinner"></div><h3>${title}</h3><p class="muted">${message}</p></div>`;
+ };
+ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+ try{
+  showStage('Authenticating','Verifying your transaction PIN securely.');
+  await wait(800);
+
+  showStage('Initializing','Preparing your transfer request.');
+  await wait(800);
+
+  const key=crypto.randomUUID?crypto.randomUUID():uid();
+  showStage('Processing payment','Updating the transfer ledger. Please do not close this screen.');
+
+  const d=await api('/api/transfers/internal',{
+   method:'POST',
+   headers:{'Idempotency-Key':key},
+   body:JSON.stringify({
+    recipientId:t.recipient.id,
+    amount:t.amount,
+    narration:t.note||undefined,
+    pin
+   })
+  });
+
+  const tx=d?.transaction;
+  const status=String(tx?.status||'UNKNOWN').toUpperCase();
+
+  showStage('Processing receipt','Checking the recorded transaction status.');
+  await wait(800);
+
+  if(status==='SUCCESS'){
+   await loadState();
+   document.getElementById('st3')?.classList.add('done');
+   document.getElementById('st3')?.classList.remove('active');
+   out.innerHTML=`<div class="v-processing">
+    <div class="v-success">✓</div>
+    <h3>Transfer succeeded</h3>
+    <p>${money(t.amount)} sent to ${esc(t.recipient.firstName+' '+t.recipient.lastName)}.</p>
+    <p class="muted">Reference: ${esc(tx.reference||tx.id||'Recorded')}</p>
+    <button class="btn primary full" onclick="shareReceipt('${esc(tx.id)}')">View receipt</button>
+    <button class="btn soft full" style="margin-top:8px" onclick="go('home')">Done</button>
+   </div>`;
+  }else if(['PROCESSING','AUTHENTICATING','CREATED'].includes(status)){
+   out.innerHTML=`<div class="notice">
+    <b>Transfer is still processing</b>
+    <p>Success has not been confirmed. Check transaction history for the latest status.</p>
+   </div>
+   <button class="btn primary full" onclick="go('history')">View transaction history</button>
+   <button class="btn soft full" style="margin-top:8px" onclick="go('home')">Done</button>`;
+  }else{
+   out.innerHTML=`<div class="notice error"><b>Transfer was not completed</b><p>Recorded status: ${esc(status)}</p></div>
+   <button class="btn outline full" onclick="go('send')">Return to transfers</button>`;
+  }
+ }catch(e){
+  out.innerHTML=`<div class="notice error"><b>Transfer result could not be confirmed</b><p>${esc(e.message||'Check transaction history before trying again.')}</p></div>
+  <button class="btn primary full" onclick="go('history')">Check transaction history</button>
+  <button class="btn outline full" style="margin-top:8px" onclick="go('home')">Done</button>`;
+ }
+};
+window.transferStep2=function(){const r=window.__vRecipient;if(!r)return;document.getElementById('st1').classList.add('done');document.getElementById('st1').classList.remove('active');document.getElementById('st2').classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};document.getElementById('transferNext').innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
+  window.shareReceipt=async function(id){
+ try{
+  const d=await api('/api/transactions/'+encodeURIComponent(id)+'/receipt'),r=d.receipt;
+  if(!r)throw new Error('Receipt not found.');
+  const amount=Number(r.amount||0),fee=Number(r.fee||0),total=Number(r.total??(amount+fee));
+  const date=new Date(r.completedAt||r.createdAt).toLocaleString();
+  const isBank=r.type==='BANK_TRANSFER',simulated=Boolean(r.simulated);
+  const status=String(r.status||'UNKNOWN').toUpperCase();
+  const sender=r.sender?`${r.sender.firstName||''} ${r.sender.lastName||''}`.trim():'Veyra account holder';
+  const recipient=(r.recipientName||(r.receiver?`${r.receiver.firstName||''} ${r.receiver.lastName||''}`.trim():''))||'Recipient';
+  const account=r.recipientAccount||r.receiver?.accountNumber||'—';
+  const bank=r.recipientBank||(isBank?'Bank transfer provider':'Veyra');
+  const narration=r.narration||'—',currency=r.currency||'NGN';
+  const fmt=n=>currency+' '+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+  const row=(label,value)=>`<p style="display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #494238;padding:10px 0;margin:0"><span style="color:#b5afa3">${label}</span><b style="text-align:right;overflow-wrap:anywhere">${esc(String(value))}</b></p>`;
+  const details=`VEYRA · TRANSACTION RECEIPT\nStatus: ${status}\nType: ${isBank?'Bank Transfer':'Veyra Transfer'}\nReference: ${r.reference||'—'}\nDate: ${date}\nSender: ${sender}\nRecipient: ${recipient}\nRecipient account: ${account}\nBank/provider: ${bank}\nAmount: ${fmt(amount)}\nFee: ${fmt(fee)}\nTotal debited: ${fmt(total)}\nDescription: ${narration}`;
+  openModal(`<div class="modalhead"><h2>Transaction receipt</h2><button class="close" onclick="closeModal()">×</button></div><div id="receiptCard" style="position:relative;background:#171614;color:#f7f4ee;border:1px solid #c9a96e;border-radius:18px;padding:24px;overflow:hidden"><div style="display:flex;align-items:center;gap:12px"><div style="width:44px;height:44px;border:1px solid #c9a96e;border-radius:14px;display:grid;place-items:center;color:#d9bd83;font-size:25px;font-weight:900">◇</div><div><div style="letter-spacing:3px;color:#d9bd83;font-weight:900;font-size:18px">VEYRA</div><div style="font-size:11px;letter-spacing:2px;color:#b5afa3">TRANSACTION RECEIPT</div></div></div><h2 style="margin:24px 0 5px;font-size:30px">${esc(fmt(amount))}</h2><div style="color:#d9bd83;font-weight:800">${esc(status)}</div><div style="margin-top:18px">${row('Transaction type',isBank?'Bank Transfer':'Veyra Transfer')}${row('Reference',r.reference||'—')}${row('Date and time',date)}${row('Sender',sender)}${row('Sender account',r.sender?.accountNumber||'—')}${row('Recipient',recipient)}${row('Recipient account',account)}${row('Bank / provider',bank)}${row('Transfer amount',fmt(amount))}${row('Fee',fmt(fee))}${row('Total debited',fmt(total))}${row('Description',narration)}</div>${simulated?'<div style="position:absolute;right:8px;bottom:5px;font-size:8px;letter-spacing:1.5px;opacity:.45;color:#d9bd83">SIMULATED</div>':''}</div><div class="actions" style="margin-top:14px"><button class="btn primary" onclick="printReceipt()">Save PDF / Print</button><button class="btn soft" onclick="downloadReceiptImage()">Save image</button><button class="btn soft" onclick="copyReceiptText()">Copy details</button><button class="btn outline" onclick="navigator.share? navigator.share({title:'Veyra receipt',text:window.__veyraReceiptText}).catch(()=>{}):copyReceiptText()">Share receipt</button></div><textarea id="receiptText" class="hidden">${esc(details)}</textarea>`,true);
+  window.__veyraReceiptText=details;
+  window.__veyraReceiptData={amount,fee,total,currency,reference:r.reference||'—',status,type:isBank?'Bank Transfer':'Veyra Transfer',sender,senderAccount:r.sender?.accountNumber||'—',recipient,date,account,bank,narration,simulated};
+ }catch(e){alert(e.message||'Could not load receipt.')}
+};
+window.downloadReceiptImage=function(){
+ const d=window.__veyraReceiptData;if(!d)return;
+ const x=v=>String(v??'—').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+ const rows=[
+  ['TRANSACTION TYPE',d.type],['REFERENCE',d.reference],['STATUS',d.status],
+  ['DATE AND TIME',d.date],['SENDER',d.sender],['SENDER ACCOUNT',d.senderAccount],
+  ['RECIPIENT',d.recipient],['RECIPIENT ACCOUNT',d.account],['BANK / PROVIDER',d.bank],
+  ['TRANSFER AMOUNT',d.currency+' '+Number(d.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})],
+  ['FEE',d.currency+' '+Number(d.fee).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})],
+  ['TOTAL DEBITED',d.currency+' '+Number(d.total).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})],
+  ['DESCRIPTION',d.narration]
+ ];
+ const height=390+rows.length*76;
+ const content=rows.map((r,i)=>`<text x="65" y="${285+i*76}" fill="#b5afa3" font-family="Arial" font-size="17">${x(r[0])}</text><text x="65" y="${315+i*76}" fill="#f7f4ee" font-family="Arial" font-size="21">${x(r[1])}</text><path d="M65 ${334+i*76} H835" stroke="#494238"/>`).join('');
+ const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="900" height="${height}"><rect width="100%" height="100%" fill="#171614"/><rect x="25" y="25" width="850" height="${height-50}" rx="28" fill="#1b1b1a" stroke="#c9a96e" stroke-width="3"/><rect x="65" y="55" width="48" height="48" rx="14" fill="none" stroke="#d9bd83" stroke-width="2"/><text x="89" y="88" text-anchor="middle" fill="#d9bd83" font-family="Arial" font-size="26" font-weight="bold">◇</text><text x="130" y="78" fill="#d9bd83" font-family="Arial" font-size="28" font-weight="bold" letter-spacing="3">VEYRA</text><text x="130" y="103" fill="#b5afa3" font-family="Arial" font-size="13" letter-spacing="2">TRANSACTION RECEIPT</text><text x="65" y="185" fill="#f7f4ee" font-family="Arial" font-size="38" font-weight="bold">${x(d.currency+' '+Number(d.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}))}</text><text x="65" y="225" fill="#d9bd83" font-family="Arial" font-size="22">${x(d.status)}</text>${content}${d.simulated?`<text x="835" y="${height-38}" text-anchor="end" fill="#d9bd83" opacity=".5" font-family="Arial" font-size="10" letter-spacing="2">SIMULATED</text>`:''}</svg>`;
+ const blob=new Blob([svg],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),img=new Image();
+ img.onload=()=>{const canvas=document.createElement('canvas');canvas.width=900;canvas.height=height;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);canvas.toBlob(async png=>{URL.revokeObjectURL(url);if(!png)return alert('Could not create receipt image.');const file=new File([png],'veyra-receipt-'+String(d.reference).replace(/[^a-zA-Z0-9_-]/g,'')+'.png',{type:'image/png'});try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'Veyra transaction receipt'});return}}catch(e){if(e?.name==='AbortError')return}const a=document.createElement('a');a.href=URL.createObjectURL(png);a.download=file.name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1500)},'image/png')};
+ img.onerror=()=>{URL.revokeObjectURL(url);alert('Could not render receipt image.')};img.src=url;
+};
+window.printReceipt=function(){const el=document.getElementById('receiptCard');if(!el)return;const w=window.open('','_blank','width=600,height=900');if(!w)return alert('Allow pop-ups to print or save as PDF.');w.document.write('<html><head><title>Veyra Receipt</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:Arial;padding:24px;color:#171614}p{border-bottom:1px solid #ddd;padding:8px 0}small{color:#555}</style></head><body>'+el.outerHTML+'</body></html>');w.document.close();w.focus();setTimeout(()=>w.print(),300)};
   window.vBankPage && setTimeout(()=>{if(token()){}},0);
 })();
 </script>
