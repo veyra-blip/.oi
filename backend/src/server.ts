@@ -640,26 +640,129 @@ app.get("/api/paystack/resolve", requireAuth, moneyLimiter, asyncRoute(async (re
 }));
 
 app.get("/api/banks/resolve", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
-  const { accountNumber, bankCode } = z.object({
+  const parsed = z.object({
     accountNumber: z.string().regex(/^\d{10}$/),
-    bankCode: z.string().min(2).max(20)
-  }).parse({ accountNumber: String(req.query.accountNumber || ""), bankCode: String(req.query.bankCode || "") });
-
-  const local = await prisma.bankAccount.findFirst({
-    where: { accountNumber, active: true, bank: { code: bankCode } },
-    include: { bank: true }
+    bankCode: z.string().trim().min(2).max(20)
+  }).safeParse({
+    accountNumber: String(req.query.accountNumber || ""),
+    bankCode: String(req.query.bankCode || "")
   });
-  if (local) return res.json({ success: true, account: { accountNumber, accountName: local.accountName, bank: local.bank.name, bankCode }, source: "veyra-bank-directory", verificationStatus: "VERIFIED" });
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      code: "INVALID_BANK_LOOKUP_INPUT",
+      message: "Enter a valid 10-digit account number and select a bank."
+    });
+  }
+
+  const { accountNumber, bankCode } = parsed.data;
 
   try {
-    const data = await paystackRequest(`/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`);
-    const account = data.data;
-    if (!account?.account_name) throw new Error("ACCOUNT_NOT_RESOLVED");
-    return res.json({ success: true, account: { accountNumber: String(account.account_number || accountNumber), accountName: String(account.account_name), bank: String(account.bank_name || ""), bankCode }, source: "paystack", verificationStatus: "VERIFIED", providerReference: account.bank_id ? String(account.bank_id) : null });
+    const local = await prisma.bankAccount.findFirst({
+      where: { accountNumber, active: true, bank: { code: bankCode } },
+      include: { bank: true }
+    });
+
+    if (local) {
+      return res.json({
+        success: true,
+        account: {
+          accountNumber,
+          accountName: local.accountName,
+          bank: local.bank.name,
+          bankCode
+        },
+        source: "veyra-bank-directory",
+        verificationStatus: "VERIFIED"
+      });
+    }
+
+    const data = await paystackRequest(
+      `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`
+    );
+
+    const account = data?.data;
+    const resolvedNumber = String(account?.account_number || accountNumber);
+    const accountName = String(account?.account_name || "").trim();
+
+    if (!accountName || resolvedNumber !== accountNumber) {
+      console.warn("[bank-resolve] Provider returned no usable matching account", {
+        bankCode,
+        accountNumberLength: accountNumber.length,
+        hasAccountName: Boolean(accountName),
+        accountNumberMatched: resolvedNumber === accountNumber
+      });
+
+      return res.status(422).json({
+        success: false,
+        code: "ACCOUNT_NOT_RESOLVED",
+        message: "The bank could not verify this account. Check the bank selection and account number."
+      });
+    }
+
+    return res.json({
+      success: true,
+      account: {
+        accountNumber: resolvedNumber,
+        accountName,
+        bank: String(account.bank_name || ""),
+        bankCode
+      },
+      source: "paystack",
+      verificationStatus: "VERIFIED",
+      providerReference: account.bank_id ? String(account.bank_id) : null
+    });
   } catch (e: any) {
-    const message = String(e?.message || "Could not resolve account.");
-    if (message === "PAYSTACK_NOT_CONFIGURED") return res.status(503).json({ success: false, code: "ACCOUNT_RESOLUTION_PROVIDER_NOT_CONFIGURED", message: "No live Nigerian account-name provider is configured and this account is not in Veyra's local bank directory." });
-    return res.status(404).json({ success: false, code: "ACCOUNT_NOT_RESOLVED", message: "The bank account name could not be verified." });
+    const message = String(e?.message || "Unknown provider error");
+    const status = Number(e?.httpStatus || e?.status || 0);
+
+    // Log only safe diagnostic information. Never log API keys or authorization headers.
+    console.error("[bank-resolve] Lookup failed", {
+      code: String(e?.code || ""),
+      message: message.slice(0, 240),
+      httpStatus: status || null,
+      bankCode,
+      accountNumberLength: accountNumber.length
+    });
+
+    if (message === "PAYSTACK_NOT_CONFIGURED") {
+      return res.status(503).json({
+        success: false,
+        code: "ACCOUNT_RESOLUTION_PROVIDER_NOT_CONFIGURED",
+        message: "The account verification provider is not available."
+      });
+    }
+
+    if (status === 429) {
+      return res.status(429).json({
+        success: false,
+        code: "ACCOUNT_RESOLUTION_RATE_LIMITED",
+        message: "Account verification is temporarily busy. Please try again shortly."
+      });
+    }
+
+    if (status === 401 || status === 403) {
+      return res.status(502).json({
+        success: false,
+        code: "ACCOUNT_RESOLUTION_PROVIDER_AUTH_ERROR",
+        message: "The account verification provider rejected the request. Check the backend provider configuration."
+      });
+    }
+
+    if (status >= 500 || /timeout|ECONNRESET|ENOTFOUND|fetch failed|network/i.test(message)) {
+      return res.status(502).json({
+        success: false,
+        code: "ACCOUNT_RESOLUTION_PROVIDER_UNAVAILABLE",
+        message: "The account verification service is temporarily unavailable. Please retry."
+      });
+    }
+
+    return res.status(422).json({
+      success: false,
+      code: "ACCOUNT_NOT_RESOLVED",
+      message: "The bank could not verify this account. Check the bank selection and account number."
+    });
   }
 }));
 
