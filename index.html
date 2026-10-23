@@ -182,7 +182,33 @@ function downloadReceiptImage(){const d=window.__veyraReceiptData;if(!d)return;c
 function bindPage(page){const u=current();if(page==='history'){const render=()=>{const q=(document.getElementById('txSearch')?.value||'').toLowerCase(),f=document.getElementById('txFilter')?.value||'all';const a=state.tx.slice().reverse().filter(t=>(f==='all'||t.kind===f)&&JSON.stringify(t).toLowerCase().includes(q));document.getElementById('txList').innerHTML=a.length?a.map(txHtml).join(''):'<div class="empty">No matching transactions.</div>'};document.getElementById('txSearch').oninput=render;document.getElementById('txFilter').onchange=render;render()}
  if(page==='send'){const input=document.getElementById('recipientInput');input.oninput=()=>{clearTimeout(lookupTimer);lookupTimer=setTimeout(()=>lookupRecipient(input.value.trim()),350)};document.getElementById('sendForm').onsubmit=e=>{e.preventDefault();const d=new FormData(e.target);beginTransfer(String(d.get('recipient')).trim(),Number(d.get('amount')),String(d.get('note')||''))}}
 }
-async function lookupRecipient(q){const box=document.getElementById('recipientLookup');if(!box)return;if(q.length<3){box.innerHTML='';return}box.innerHTML='<div class="muted">Checking shared Veyra accounts…</div>';try{const d=await api('/api/users/lookup?q='+encodeURIComponent(q));const r=d.recipient;box.innerHTML=`<div class="lookup-card"><b>${esc(r.firstName+' '+r.lastName)}</b><span class="muted">Account ${esc(r.accountNumber)} · @${esc(r.username)}</span><span class="tag">✓ Veyra account found</span></div>`;box.dataset.recipientId=r.id;box.dataset.name=r.firstName+' '+r.lastName}catch(e){box.dataset.recipientId='';box.innerHTML='<div class="notice error">No active Veyra account found for that account number.</div>'}}
+async function lookupRecipient(q){
+ const box=document.getElementById('recipientLookup');
+ if(!box)return;
+ if(q.length<3){box.innerHTML='';box.dataset.recipientId='';return}
+ box.innerHTML='<div class="muted">Checking shared Veyra accounts…</div>';
+ try{
+  const d=await api('/api/users/lookup?q='+encodeURIComponent(q));
+  const r=d.recipient;
+  if(!r||!r.id)throw new Error('No active Veyra account found.');
+  box.dataset.recipientId=r.id;
+  box.dataset.name=r.firstName+' '+r.lastName;
+  box.innerHTML=`<button type="button" class="lookup-card" style="display:flex;width:100%;text-align:left;cursor:pointer" onclick="selectVeyraRecipient('${esc(r.id)}','${esc(r.accountNumber)}','${esc(r.firstName+' '+r.lastName)}')"><b>${esc(r.firstName+' '+r.lastName)}</b><span class="muted">Account ${esc(r.accountNumber)} · @${esc(r.username)}</span><span class="tag">✓ Tap to select</span></button>`;
+ }catch(e){
+  box.dataset.recipientId='';
+  box.dataset.name='';
+  box.innerHTML=`<div class="notice error">${esc(e.message||'No active Veyra account found.')}</div>`;
+ }
+}
+function selectVeyraRecipient(id,account,name){
+ const input=document.getElementById('recipientInput');
+ const box=document.getElementById('recipientLookup');
+ if(!input||!box)return;
+ input.value=account;
+ box.dataset.recipientId=id;
+ box.dataset.name=name;
+ box.innerHTML=`<div class="lookup-card"><b>${esc(name)}</b><span class="muted">Account ${esc(account)}</span><span class="tag">✓ Recipient selected</span></div>`;
+}
 function openModal(html){const m=document.getElementById('modal');m.innerHTML=`<div class="modalbox">${html}</div>`;m.classList.add('open')}
 function closeModal(){document.getElementById('modal')?.classList.remove('open')}
 async function searchModal(){openModal(`<div class="modalhead"><h2>Find a Veyra user</h2><button class="close" onclick="closeModal()">×</button></div><div class="field"><label>Account number, phone or username</label><input id="userSearch" placeholder="01… / phone / username"></div><button class="btn primary" onclick="findUser()">Search</button><div id="searchResult" style="margin-top:15px"></div>`)}
@@ -318,7 +344,7 @@ window.renderShell=function(){oldRenderShell();setTimeout(brandAvatar,0)};
 window.sendHtml=function(){return `<section class="page active" id="page-send"><h1 class="title">To Veyra</h1><p class="subtitle">Send money securely to another Veyra account.</p><div class="card"><div class="v-stepper"><div class="v-step active" id="st1"><div class="dot">1</div>Recipient</div><div class="v-step" id="st2"><div class="dot">2</div>Amount</div><div class="v-step" id="st3"><div class="dot">3</div>Confirm</div></div><div class="field"><label>Veyra username or account number</label><input id="recipientInput" autocomplete="off" placeholder="Enter username or account number"><div id="recipientLookup"></div></div><div id="transferNext"></div></div></section>`};
 window.bindTransferWizard=function(){const input=document.getElementById('recipientInput');if(!input)return;input.oninput=async()=>{const q=input.value.trim();window.__vRecipient=null;const lookupQ=q;const box=document.getElementById('recipientLookup');if(q.length<3){box.innerHTML='';return}box.innerHTML='<div class="notice">Checking Veyra account…</div>';try{const d=await api('/api/users/lookup?q='+encodeURIComponent(q));if(input.value.trim()!==lookupQ)return;const r=d.recipient;if(!r||!r.id)throw new Error("Recipient not found.");window.__vRecipient=r;box.innerHTML=`<div class="lookup-card" role="button" tabindex="0" style="cursor:pointer" onclick="transferStep2()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();transferStep2()}"><b>${esc(r.firstName+' '+r.lastName)}</b><div class="muted">${esc(r.accountNumber)} · @${esc(r.username)}</div><div class="small">Tap to continue</div></div><div class="v-alias"><div class="field"><label>Recipient label (optional)</label><input id="recipientAlias" maxlength="24" placeholder="e.g. BB2"></div><button class="btn soft" style="margin-bottom:13px" onclick="transferStep2()">Continue</button></div>`}catch(e){box.innerHTML=`<div class="notice error">${esc(e.message||'Veyra account not found.')}</div>`}}};
 window.transferStep2=function(){const r=window.__vRecipient;if(!r)return;document.getElementById('st1').classList.add('done');document.getElementById('st1').classList.remove('active');document.getElementById('st2').classList.add('active');window.__vTransfer={recipient:r,alias:(document.getElementById('recipientAlias')?.value||'').trim()};document.getElementById('transferNext').innerHTML=`<div class="field"><label>Amount</label><input id="vTransferAmount" type="number" min="1" step="0.01" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="vTransferNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="transferStep3()">Continue</button>`};
-window.transferStep3=function(){const amount=Number(document.getElementById('vTransferAmount')?.value),note=(document.getElementById('vTransferNote')?.value||'').trim(),senderId=(document.getElementById('vTransferSenderId')?.value||'').trim();if(!amount||amount<=0)return alert('Enter a valid amount.');if(amount>current().balance)return alert('Insufficient balance.');if(!senderId)return alert('Enter an SMS Sender ID.');window.__vTransfer.amount=amount;window.__vTransfer.note=note;window.__vTransfer.senderId=senderId;document.getElementById('st2').classList.add('done');document.getElementById('st2').classList.remove('active');document.getElementById('st3').classList.add('active');const r=window.__vTransfer.recipient;document.getElementById('transferNext').innerHTML=`<div class="v-confirm v-stage"><div class="v-confirm-row"><span>Recipient</span><b>${esc(r.firstName+' '+r.lastName)}</b></div><div class="v-confirm-row"><span>Account</span><b>${esc(r.accountNumber)}</b></div><div class="v-confirm-row"><span>Amount</span><b>${money(amount)}</b></div><div class="v-confirm-row"><span>Recipient label</span><b>${esc(window.__vTransfer.alias||'None')}</b></div></div><div class="field"><label>Transaction PIN</label><input id="vTransferPin" class="v-pin" inputmode="numeric" maxlength="4" placeholder="••••"></div><button class="btn primary full" onclick="performVTransfer()">Send money</button>`};
+window.transferStep3=function(){const amount=Number(document.getElementById('vTransferAmount')?.value),note=(document.getElementById('vTransferNote')?.value||'').trim(),senderId=(document.getElementById('vTransferSenderId')?.value||'').trim();if(!amount||amount<=0)return alert('Enter a valid amount.');if(amount>current().balance)return alert('Insufficient balance.');window.__vTransfer.amount=amount;window.__vTransfer.note=note;window.__vTransfer.senderId=senderId;document.getElementById('st2').classList.add('done');document.getElementById('st2').classList.remove('active');document.getElementById('st3').classList.add('active');const r=window.__vTransfer.recipient;document.getElementById('transferNext').innerHTML=`<div class="v-confirm v-stage"><div class="v-confirm-row"><span>Recipient</span><b>${esc(r.firstName+' '+r.lastName)}</b></div><div class="v-confirm-row"><span>Account</span><b>${esc(r.accountNumber)}</b></div><div class="v-confirm-row"><span>Amount</span><b>${money(amount)}</b></div><div class="v-confirm-row"><span>Recipient label</span><b>${esc(window.__vTransfer.alias||'None')}</b></div></div><div class="field"><label>Transaction PIN</label><input id="vTransferPin" class="v-pin" inputmode="numeric" maxlength="4" placeholder="••••"></div><button class="btn primary full" onclick="performVTransfer()">Send money</button>`};
 window.performVTransfer=async function(){const p=document.getElementById('vTransferPin')?.value.trim();if(!/^[0-9]{4}$/.test(p||''))return alert('PIN must be exactly 4 digits.');const t=window.__vTransfer;document.getElementById('transferNext').innerHTML='<div class="v-processing v-stage"><div class="v-spinner"></div><h3>Processing transfer</h3><p class="muted">Please wait while Veyra completes the transfer.</p></div>';try{await api('/api/transfers/internal',{method:'POST',headers:{'Idempotency-Key':uid()},body:JSON.stringify({recipientId:t.recipient.id,amount:t.amount,narration:t.note||undefined,pin:p,recipientAlias:t.alias||undefined,senderId:t.senderId||undefined})});await loadState();document.getElementById('st3').classList.add('done');document.getElementById('st3').classList.remove('active');document.getElementById('transferNext').innerHTML=`<div class="v-processing"><div class="v-success">✓</div><h3>Transfer successful</h3><p>${money(t.amount)} sent to ${esc(t.recipient.firstName+' '+t.recipient.lastName)}.</p><button class="btn primary full" onclick="go('home')">Done</button></div>`}catch(e){document.getElementById('transferNext').innerHTML=`<div class="notice error">${esc(e.message||'Transfer failed.')}</div><button class="btn outline full" onclick="go('send')">Try again</button>`}};
 const oldServiceModal=window.serviceModal;window.serviceModal=function(type){if(type==='Airtime')return airtimeUI();if(type==='Data')return dataUI();return oldServiceModal(type)};
 
@@ -422,7 +448,78 @@ if(token()){renderShell();go('home')}
   window.liveResolveAccount=function(){clearTimeout(paystackBankTimer);const requestId=++bankResolveRequestId;window.__vBankRecipient=null;window.__vBankTransferVerification=null;const input=document.getElementById('bankAcc');const acc=(input?.value||'').replace(/\D/g,'').slice(0,10);if(input)input.value=acc;const out=document.getElementById('bankResolveResult');if(!out)return;if(acc.length<10){out.innerHTML='';return}out.innerHTML='<div class="notice">Finding account name…</div>';paystackBankTimer=setTimeout(()=>resolvePaystackAccount(acc,requestId),250)};
   window.resolvePaystackAccount=async function(acc,requestId=bankResolveRequestId){const out=document.getElementById('bankResolveResult');const bank=selectedPaystackBank;if(!out||!bank||requestId!==bankResolveRequestId)return;const input=document.getElementById('bankAcc');if((input?.value||'').trim()!==acc)return;window.__vBankRecipient=null;try{const d=await api('/api/banks/resolve?accountNumber='+encodeURIComponent(acc)+'&bankCode='+encodeURIComponent(bank.code));if(requestId!==bankResolveRequestId||selectedPaystackBank?.code!==bank.code||(document.getElementById('bankAcc')?.value||'').trim()!==acc||document.getElementById('bankResolveResult')!==out)return;const a=d.account;if(!a?.accountName||String(a.accountNumber)!==acc)throw new Error('The returned account does not match the entered number.');const verified={...a,accountNumber:String(a.accountNumber),bankCode:String(a.bankCode||bank.code)};window.__vBankRecipient=verified;out.innerHTML=`<div class="verified-account"><div class="verified-mark">✓</div><div><b>${esc(verified.accountName)}</b><div class="muted">${esc(verified.accountNumber)} · ${esc(verified.bank||bank.name)}</div><span class="tag">Account name verified</span></div></div><div class="field"><label>Amount</label><input id="bankAmt" type="number" min="1" inputmode="decimal" placeholder="₦0.00"></div><div class="field"><label>Description</label><input id="bankNote" maxlength="140" placeholder="Optional"></div><button class="btn primary full" onclick="vExternalSend()">Confirm recipient</button>`}catch(e){if(requestId!==bankResolveRequestId||selectedPaystackBank?.code!==bank.code||(document.getElementById('bankAcc')?.value||'').trim()!==acc)return;window.__vBankRecipient=null;out.innerHTML=`<div class="notice error">${esc(e.message||'Could not find this account name.')}</div><button class="btn soft" onclick="resolvePaystackAccount(${JSON.stringify(acc)})">Retry lookup</button>`}};
   window.vExternalSend=function(){const a=window.__vBankRecipient;const acc=(document.getElementById('bankAcc')?.value||'').trim();if(!a||!selectedPaystackBank||a.accountNumber!==acc||a.bankCode!==String(selectedPaystackBank.code))return alert('The verified account no longer matches. Please look up the account again.');const amount=Number(document.getElementById('bankAmt')?.value),note=(document.getElementById('bankNote')?.value||'').trim();if(!amount||amount<=0)return alert('Enter a valid amount.');if(amount>current().balance)return alert('Insufficient balance.');window.__vBankTransferVerification={accountNumber:a.accountNumber,bankCode:String(selectedPaystackBank.code),accountName:a.accountName,bankName:a.bank||selectedPaystackBank.name,amount,note};openModal(`<div class="modalhead"><h2>Confirm bank transfer</h2><button class="close" onclick="closeModal()">×</button></div><div class="v-confirm v-stage"><div class="v-confirm-row"><span>Bank</span><b>${esc(a.bank||selectedPaystackBank.name)}</b></div><div class="v-confirm-row"><span>Account</span><b>${esc(a.accountNumber)}</b></div><div class="v-confirm-row"><span>Account name</span><b>${esc(a.accountName)}</b></div><div class="v-confirm-row"><span>Amount</span><b>${money(amount)}</b></div></div><div class="field"><label>Transaction PIN</label><input id="bankPin" class="v-pin" inputmode="numeric" maxlength="4" placeholder="••••"></div><button class="btn primary full" onclick="performBankTransfer()">Transfer</button>`,true)};
-  window.performBankTransfer=async function(){const a=window.__vBankRecipient,v=window.__vBankTransferVerification,pin=document.getElementById('bankPin')?.value.trim(),amount=Number(v?.amount),note=String(v?.note||'');if(!a||!v||!selectedPaystackBank||a.accountNumber!==v.accountNumber||a.accountName!==v.accountName||a.bankCode!==v.bankCode||String(selectedPaystackBank.code)!==v.bankCode)return alert('The verified account no longer matches. Please look up the account again.');if(!/^[0-9]{4}$/.test(pin||''))return alert('Enter your 4-digit transaction PIN.');const key=crypto.randomUUID?crypto.randomUUID():('veyra-'+Date.now()+'-'+Math.random().toString(16).slice(2));const box=document.querySelector('.modalbox');if(box)box.innerHTML='<div class="v-processing v-stage"><div class="v-spinner"></div><h3>Confirming bank transfer</h3><p class="muted">Checking recipient, PIN and transaction ledger.</p></div>';try{const d=await api('/api/providers/bank-transfer',{method:'POST',headers:{'Idempotency-Key':key},body:JSON.stringify({countryCode:'NG',currency:'NGN',accountNumber:a.accountNumber,bankCode:selectedPaystackBank.code,bankName:v.bankName,accountName:v.accountName,amount,narration:note||'Veyra bank transfer',pin})});await loadState();closeModal();setTimeout(()=>shareReceipt(d.transactionId),120)}catch(e){if(box)box.innerHTML='<div class="notice error v-stage">'+esc(e.message||'Bank transfer failed.')+'</div><button class="btn outline full" onclick="closeModal()">Close</button>'}};
+  window.performBankTransfer=async function(){
+ const a=window.__vBankRecipient,v=window.__vBankTransferVerification,
+ pin=document.getElementById('bankPin')?.value.trim(),
+ amount=Number(v?.amount),note=String(v?.note||'');
+ if(!a||!v||!selectedPaystackBank||a.accountNumber!==v.accountNumber||a.accountName!==v.accountName||a.bankCode!==v.bankCode||String(selectedPaystackBank.code)!==v.bankCode)return alert('The verified account no longer matches. Please look up the account again.');
+ if(!/^[0-9]{4}$/.test(pin||''))return alert('Enter your 4-digit transaction PIN.');
+
+ const key=crypto.randomUUID?crypto.randomUUID():('veyra-'+Date.now()+'-'+Math.random().toString(16).slice(2));
+ const box=document.querySelector('.modalbox');
+ const showStage=(title,message)=>{
+  const currentBox=document.querySelector('.modalbox');
+  if(currentBox)currentBox.innerHTML=`<div class="v-processing v-stage"><div class="v-spinner"></div><h3>${esc(title)}</h3><p class="muted">${esc(message)}</p></div>`;
+ };
+ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+ try{
+  showStage('Authenticating','Verifying your transaction PIN securely.');
+  await wait(800);
+
+  showStage('Initializing','Preparing your bank transfer request.');
+  await wait(800);
+
+  showStage('Processing payment','Updating the transfer ledger. Please do not close this screen.');
+
+  const d=await api('/api/providers/bank-transfer',{
+   method:'POST',
+   headers:{'Idempotency-Key':key},
+   body:JSON.stringify({
+    countryCode:'NG',
+    currency:'NGN',
+    accountNumber:a.accountNumber,
+    bankCode:selectedPaystackBank.code,
+    bankName:v.bankName,
+    accountName:v.accountName,
+    amount,
+    narration:note||'Veyra bank transfer',
+    pin
+   })
+  });
+
+  showStage('Processing receipt','Checking the recorded bank transfer status.');
+  await wait(800);
+
+  const status=String(d?.status||d?.transaction?.status||'UNKNOWN').toUpperCase();
+  const transactionId=d?.transactionId||d?.transaction?.id;
+
+  if(['SUCCESS','PROCESSING','PENDING','AUTHENTICATING','CREATED'].includes(status)){
+   try{
+    await loadState();
+   }catch(e){
+    console.warn('Wallet refresh failed after bank transfer; receipt remains available.',e);
+   }
+
+   closeModal();
+
+   if(transactionId){
+    setTimeout(()=>shareReceipt(transactionId),120);
+   }else{
+    openModal(`<div class="notice error"><b>Transfer recorded but receipt reference is unavailable.</b><p>Check transaction history before trying again.</p></div><button class="btn outline full" onclick="closeModal()">Close</button>`,true);
+   }
+   return;
+  }
+
+  const message=d?.message||'Bank transfer was not completed.';
+  const failedBox=document.querySelector('.modalbox');
+  if(failedBox)failedBox.innerHTML=`<div class="notice error v-stage"><b>Bank transfer failed</b><p>${esc(message)}</p></div><button class="btn outline full" onclick="closeModal()">Close</button>`;
+
+ }catch(e){
+  const errorBox=document.querySelector('.modalbox');
+  if(errorBox)errorBox.innerHTML=`<div class="notice error v-stage"><b>Bank transfer failed</b><p>${esc(e.message||'Bank transfer failed.')}</p></div><button class="btn outline full" onclick="closeModal()">Close</button>`;
+ }
+};
   window.transferStep3=function(){
  const amount=Number(document.getElementById('vTransferAmount')?.value);
  const note=(document.getElementById('vTransferNote')?.value||'').trim();
@@ -534,7 +631,11 @@ window.transferShowPin=function(){
   await wait(800);
 
   if(status==='SUCCESS'){
-   await loadState();
+   try {
+    await loadState();
+   } catch(refreshError) {
+    console.warn('Transfer succeeded; wallet refresh failed. Receipt remains available.', refreshError);
+   }
    document.getElementById('st3')?.classList.add('done');
    document.getElementById('st3')?.classList.remove('active');
    out.innerHTML=`<div class="v-processing">

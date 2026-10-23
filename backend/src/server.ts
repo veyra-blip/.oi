@@ -390,16 +390,34 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
     recipientId: z.string(),
     amount: z.coerce.number().positive().max(50000000),
     narration: z.string().max(140).optional(),
-    pin: z.string().regex(/^\d{4}$/),
+    pin: z.string().regex(/^\d{4}$/).optional(),
+    authorizationId: z.string().optional(),
     senderId: z.string().trim().max(30).optional()
   }).parse(req.body);
 
-  try {
-    await verifyTransactionPin(req.userId, body.pin);
-  } catch (e: any) {
-    const code = e?.message || "INVALID_PIN";
-    return res.status(code === "PIN_LOCKED" ? 423 : code === "USER_NOT_FOUND" ? 404 : 401)
-      .json({ success: false, code, message: friendlyPinError(code) });
+  if (Boolean(body.pin) === Boolean(body.authorizationId)) {
+    return res.status(400).json({ success:false, code:"ONE_AUTH_METHOD_REQUIRED", message:"Choose either your transaction PIN or fingerprint authorization." });
+  }
+  if (body.authorizationId) {
+    try {
+      await consumeTransferAuthorization(req.userId, body.authorizationId, {
+        type: "INTERNAL_TRANSFER",
+        recipientId: body.recipientId,
+        amount: body.amount,
+        narration: body.narration
+      });
+    } catch (e: any) {
+      const code = e?.message || "TRANSFER_AUTHORIZATION_INVALID";
+      return res.status(401).json({ success:false, code, message:"Fingerprint authorization expired or does not match this transfer. Please authorize again." });
+    }
+  } else {
+    try {
+      await verifyTransactionPin(req.userId, body.pin!);
+    } catch (e: any) {
+      const code = e?.message || "INVALID_PIN";
+      return res.status(code === "PIN_LOCKED" ? 423 : code === "USER_NOT_FOUND" ? 404 : 401)
+        .json({ success: false, code, message: friendlyPinError(code) });
+    }
   }
 
   const limitCheck = await checkDailyTransferLimit(req.userId, body.amount);
@@ -878,6 +896,179 @@ app.post("/api/security/webauthn/register/verify", requireAuth, authLimiter, asy
   res.json({ success: true, verified: true, message: "Secure device authentication has been registered." });
 }));
 
+
+
+async function consumeTransferAuthorization(userId: string, authorizationId: string, context: any) {
+  const challenge = await prisma.webAuthnChallenge.findFirst({
+    where: {
+      id: authorizationId,
+      userId,
+      purpose: "TRANSFER_AUTHORIZATION",
+      verifiedAt: { not: null },
+      consumedAt: null,
+      expiresAt: { gt: new Date() }
+    }
+  });
+  if (!challenge) throw new Error("TRANSFER_AUTHORIZATION_INVALID");
+  const expectedHash = hashRequest(transferAuthorizationContext(userId, context));
+  if (!challenge.contextHash || challenge.contextHash !== expectedHash) {
+    throw new Error("TRANSFER_AUTHORIZATION_MISMATCH");
+  }
+  const consumed = await prisma.webAuthnChallenge.updateMany({
+    where: {
+      id: challenge.id,
+      userId,
+      purpose: "TRANSFER_AUTHORIZATION",
+      verifiedAt: { not: null },
+      consumedAt: null,
+      expiresAt: { gt: new Date() },
+      contextHash: expectedHash
+    },
+    data: { consumedAt: new Date() }
+  });
+  if (consumed.count !== 1) throw new Error("TRANSFER_AUTHORIZATION_INVALID");
+}
+
+// TRANSFER_WEBAUTHN_PATCH_V1
+function transferAuthorizationContext(userId: string, body: any) {
+  const type = String(body.type || "").toUpperCase();
+  const amount = new Prisma.Decimal(body.amount).toFixed(2);
+  if (type === "INTERNAL_TRANSFER") return {
+    userId, type, recipientId: String(body.recipientId || ""),
+    amount, narration: String(body.narration || "")
+  };
+  if (type === "BANK_TRANSFER") return {
+    userId, type,
+    countryCode: String(body.countryCode || "NG").toUpperCase(),
+    currency: String(body.currency || "NGN").toUpperCase(),
+    accountNumber: String(body.accountNumber || ""),
+    bankCode: String(body.bankCode || ""),
+    accountName: String(body.accountName || "").trim(),
+    bankName: String(body.bankName || "").trim(),
+    amount, narration: String(body.narration || "")
+  };
+  throw new Error("INVALID_TRANSFER_TYPE");
+}
+
+app.post("/api/security/webauthn/transfer/options", requireAuth, authLimiter, asyncRoute(async (req: any, res: any) => {
+  const body = z.object({
+    type: z.enum(["INTERNAL_TRANSFER", "BANK_TRANSFER"]),
+    recipientId: z.string().optional(),
+    countryCode: z.string().length(2).optional(),
+    currency: z.string().length(3).optional(),
+    accountNumber: z.string().optional(),
+    bankCode: z.string().optional(),
+    accountName: z.string().optional(),
+    bankName: z.string().optional(),
+    amount: z.coerce.number().positive().max(50000000),
+    narration: z.string().max(140).optional()
+  }).parse(req.body);
+
+  if (body.type === "INTERNAL_TRANSFER" && !body.recipientId)
+    return res.status(400).json({ success: false, code: "RECIPIENT_REQUIRED" });
+  if (body.type === "BANK_TRANSFER" && (!body.accountNumber || !body.bankCode || !body.accountName || !body.bankName))
+    return res.status(400).json({ success: false, code: "BANK_RECIPIENT_REQUIRED" });
+
+  const devices = await prisma.device.findMany({
+    where: { userId: req.userId, revokedAt: null },
+    select: { credentialId: true, transports: true }
+  });
+  if (!devices.length)
+    return res.status(404).json({ success: false, code: "WEBAUTHN_NOT_ENROLLED", message: "Set up device authentication first." });
+
+  const { rpID } = webAuthnConfig();
+  const options: any = await generateAuthenticationOptions({
+    rpID,
+    allowCredentials: devices.map((d: any) => ({ id: d.credentialId, transports: d.transports })),
+    userVerification: "required"
+  } as any);
+
+  const challenge = await prisma.webAuthnChallenge.create({
+    data: {
+      userId: req.userId,
+      challenge: options.challenge,
+      purpose: "TRANSFER_AUTHORIZATION",
+      contextHash: hashRequest(transferAuthorizationContext(req.userId, body)),
+      expiresAt: new Date(Date.now() + 5 * 60_000)
+    }
+  });
+  res.json({ success: true, challengeId: challenge.id, publicKey: options });
+}));
+
+app.post("/api/security/webauthn/transfer/verify", requireAuth, authLimiter, asyncRoute(async (req: any, res: any) => {
+  const body = z.object({
+    challengeId: z.string().min(1),
+    credential: z.record(z.string(), z.any())
+  }).parse(req.body);
+
+  const challenge = await prisma.webAuthnChallenge.findFirst({
+    where: {
+      id: body.challengeId, userId: req.userId,
+      purpose: "TRANSFER_AUTHORIZATION", consumedAt: null,
+      verifiedAt: null, expiresAt: { gt: new Date() }
+    }
+  });
+  if (!challenge) return res.status(400).json({ success: false, code: "TRANSFER_AUTHORIZATION_EXPIRED_OR_USED" });
+
+  const credentialId = String(body.credential.id || "");
+  const device = await prisma.device.findFirst({
+    where: { userId: req.userId, credentialId, revokedAt: null }
+  });
+  if (!device) return res.status(401).json({ success: false, code: "WEBAUTHN_DEVICE_UNKNOWN" });
+
+  const { origin, rpID } = webAuthnConfig();
+  let verification: any;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response: body.credential as any,
+      expectedChallenge: challenge.challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      credential: {
+        id: device.credentialId,
+        publicKey: Buffer.from(device.publicKeyBase64, "base64url"),
+        counter: Number(device.counter),
+        transports: device.transports as any
+      },
+      requireUserVerification: true
+    } as any);
+  } catch {
+    return res.status(401).json({ success: false, code: "WEBAUTHN_AUTHENTICATION_FAILED" });
+  }
+  if (!verification?.verified)
+    return res.status(401).json({ success: false, code: "WEBAUTHN_AUTHENTICATION_FAILED" });
+
+  const updated = await prisma.webAuthnChallenge.updateMany({
+    where: {
+      id: challenge.id, userId: req.userId,
+      purpose: "TRANSFER_AUTHORIZATION", consumedAt: null,
+      verifiedAt: null, expiresAt: { gt: new Date() }
+    },
+    data: { verifiedAt: new Date() }
+  });
+  if (updated.count !== 1)
+    return res.status(409).json({ success: false, code: "TRANSFER_AUTHORIZATION_ALREADY_USED" });
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.device.update({
+      where: { id: device.id },
+      data: {
+        counter: BigInt(Number(verification.authenticationInfo?.newCounter || 0)),
+        lastUsedAt: new Date()
+      }
+    });
+    await tx.auditLog.create({
+      data: {
+        actorUserId: req.userId, targetUserId: req.userId,
+        action: "TRANSFER_WEBAUTHN_VERIFIED",
+        entityType: "WebAuthnChallenge", entityId: challenge.id
+      }
+    });
+  });
+
+  res.json({ success: true, verified: true, authorizationId: challenge.id });
+}));
+
 app.post("/api/security/webauthn/auth/options", requireAuth, authLimiter, asyncRoute(async (req: any, res: any) => {
   const devices = await prisma.device.findMany({ where: { userId: req.userId, revokedAt: null }, select: { credentialId: true, transports: true } });
   if (!devices.length) return res.status(404).json({ success: false, code: "WEBAUTHN_NOT_ENROLLED", message: "Set up device authentication first." });
@@ -1239,14 +1430,37 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
     accountNumber: z.string().min(4).max(34), bankCode: z.string().max(40).optional(),
     accountName: z.string().min(2).max(120), bankName: z.string().min(2).max(120),
     amount: z.coerce.number().positive().max(50000000), narration: z.string().max(140).optional(),
-    pin: z.string().regex(/^\d{4}$/)
+    pin: z.string().regex(/^\d{4}$/).optional(),
+    authorizationId: z.string().optional()
   }).parse(req.body);
+  if (Boolean(body.pin) === Boolean(body.authorizationId)) {
+    return res.status(400).json({ success:false, code:"ONE_AUTH_METHOD_REQUIRED", message:"Choose either your transaction PIN or fingerprint authorization." });
+  }
   if (body.countryCode !== "NG" || body.currency !== "NGN") {
     if (!process.env.PAYOUT_API_URL || !process.env.PAYOUT_API_KEY) return res.status(503).json({ success:false, code:"INTERNATIONAL_PAYOUT_PROVIDER_NOT_CONFIGURED", message:"International payout requires the configured payout provider." });
   }
   if (body.countryCode === "NG" && body.currency === "NGN" && String(process.env.BANK_TRANSFER_MODE || "SIMULATED").toUpperCase() === "LIVE" && !process.env.PAYSTACK_SECRET_KEY?.trim()) return res.status(503).json({ success:false, code:"PAYSTACK_NOT_CONFIGURED", message:"Live payouts are disabled until Paystack is configured. No balance was changed." });
-  try { await verifyTransactionPin(req.userId, body.pin); }
-  catch (e: any) { const code = e?.message || "INVALID_PIN"; return res.status(code === "PIN_LOCKED" ? 423 : 401).json({ success: false, code, message: friendlyPinError(code) }); }
+  if (body.authorizationId) {
+    try {
+      await consumeTransferAuthorization(req.userId, body.authorizationId, {
+        type: "BANK_TRANSFER",
+        countryCode: body.countryCode,
+        currency: body.currency,
+        accountNumber: body.accountNumber,
+        bankCode: body.bankCode,
+        accountName: body.accountName,
+        bankName: body.bankName,
+        amount: body.amount,
+        narration: body.narration
+      });
+    } catch (e: any) {
+      const code = e?.message || "TRANSFER_AUTHORIZATION_INVALID";
+      return res.status(401).json({ success:false, code, message:"Fingerprint authorization expired or does not match this transfer. Please authorize again." });
+    }
+  } else {
+    try { await verifyTransactionPin(req.userId, body.pin!); }
+    catch (e: any) { const code = e?.message || "INVALID_PIN"; return res.status(code === "PIN_LOCKED" ? 423 : 401).json({ success: false, code, message: friendlyPinError(code) }); }
+  }
   const idem = idempotencyKey(req);
   if (!idem || idem.length > 128) return res.status(400).json({ success:false, code:"IDEMPOTENCY_KEY_REQUIRED", message:"Provide a unique Idempotency-Key header." });
   const limitCheck = await checkDailyTransferLimit(req.userId, body.amount);
@@ -1278,7 +1492,7 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
   } else return res.status(503).json({ success:false, code:"ACCOUNT_RESOLUTION_PROVIDER_NOT_CONFIGURED", message:"International account-name verification requires the configured provider." });
 
   const amount = new Prisma.Decimal(body.amount.toFixed(2));
-  const requestHash = hashRequest({ ...body, pin: undefined, accountName: verifiedName, bankName: resolvedBankName });
+  const requestHash = hashRequest({ ...body, pin: undefined, authorizationId: undefined, accountName: verifiedName, bankName: resolvedBankName });
   try {
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.idempotencyKey.findUnique({ where:{ userId_key:{ userId:req.userId, key:idem } }, include:{transaction:true} });

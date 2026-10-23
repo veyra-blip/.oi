@@ -1,0 +1,3 @@
+ALTER TABLE "WebAuthnChallenge"
+  ADD COLUMN IF NOT EXISTS "contextHash" TEXT,
+  ADD COLUMN IF NOT EXISTS "verifiedAt" TIMESTAMP(3);
