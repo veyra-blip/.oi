@@ -1356,35 +1356,140 @@ function transferRecipientCode(response: any) { const code = response?.data?.rec
 app.post("/api/webhooks/paystack", asyncRoute(async (req: any, res: any) => {
   const secret = process.env.PAYSTACK_SECRET_KEY?.trim();
   const signature = String(req.headers["x-paystack-signature"] || "");
-  if (!secret || !signature || !req.rawBody) return res.status(401).json({ success: false, message: "Webhook signature is required." });
+  if (!secret || !signature || !req.rawBody) {
+    return res.status(401).json({ success: false, message: "Webhook signature is required." });
+  }
+
   const expected = crypto.createHmac("sha512", secret).update(req.rawBody).digest("hex");
-  const a = Buffer.from(expected, "utf8"), b = Buffer.from(signature, "utf8");
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ success: false, message: "Invalid webhook signature." });
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(signature, "utf8");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ success: false, message: "Invalid webhook signature." });
+  }
+
   const event = req.body || {};
   const eventName = String(event.event || "");
-  if (!["transfer.success", "transfer.failed", "transfer.reversed"].includes(eventName)) return res.status(200).json({ success: true, ignored: true });
+  if (!["transfer.success", "transfer.failed", "transfer.reversed"].includes(eventName)) {
+    return res.status(200).json({ success: true, ignored: true });
+  }
+
   const data = event.data || {};
   const providerReference = String(data.reference || data.transfer_code || "");
   if (!providerReference) return res.status(200).json({ success: true, ignored: true });
-  const transaction = await prisma.transaction.findFirst({ where: { metadata: { path: ["providerReference"], equals: providerReference } } });
+
+  const transaction = await prisma.transaction.findFirst({
+    where: { metadata: { path: ["providerReference"], equals: providerReference } }
+  });
   if (!transaction) return res.status(200).json({ success: true, ignored: true });
-  const nextStatus = eventName === "transfer.success" ? "SUCCESS" : eventName === "transfer.reversed" ? "REVERSED" : "FAILED";
+
+  const nextStatus = eventName === "transfer.success"
+    ? "SUCCESS"
+    : eventName === "transfer.reversed" ? "REVERSED" : "FAILED";
   const eventKey = `paystack:${providerReference}:${eventName}`;
-  try { await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.transactionEvent.create({ data: { transactionId: transaction.id, actorUserId: transaction.senderId, eventType: eventName, eventKey, fromStatus: transaction.status, toStatus: nextStatus, provider: "PAYSTACK", providerRef: providerReference, payloadHash: crypto.createHash("sha256").update(req.rawBody).digest("hex"), metadata: { reason: data.reason || null } } });
-    const latest = await tx.transaction.findUnique({ where: { id: transaction.id } });
-    if (!latest || latest.status === nextStatus) return;
-    await tx.transaction.update({ where: { id: transaction.id }, data: { status: nextStatus as any, completedAt: new Date(), failureReason: nextStatus === "SUCCESS" ? null : String(data.reason || `Paystack event: ${eventName}`) } });
-    const linkedReceipts = await tx.receipt.findMany({ where: { transactionId: latest.id } });
-    for (const receipt of linkedReceipts) await tx.receipt.update({ where: { id: receipt.id }, data: { snapshot: { ...(receipt.snapshot as any), status: nextStatus, completedAt: new Date().toISOString(), providerReference } } });
-    if ((nextStatus === "REVERSED" || nextStatus === "FAILED") && latest.status !== "FAILED" && latest.status !== "REVERSED" && latest.senderId) {
-      await tx.wallet.update({ where: { userId: latest.senderId }, data: { balance: { increment: latest.amount } } });
-      await tx.account.update({ where: { userId: latest.senderId }, data: { balanceKobo: { increment: amountToKobo(latest.amount) } } });
-      await tx.transactionEntry.create({ data: { transactionId: latest.id, userId: latest.senderId, type: "CREDIT", amount: latest.amount } });
-    }
-    if (latest.senderId) await tx.notification.create({ data: { userId: latest.senderId, type: "TRANSFER_SENT", title: `Bank transfer ${nextStatus.toLowerCase()}`, message: `Bank transfer ${latest.reference}: ${nextStatus.toLowerCase()}.` } });
-    await tx.auditLog.create({ data: { targetUserId: latest.senderId, action: "PAYSTACK_WEBHOOK_RECONCILED", entityType: "Transaction", entityId: latest.id, metadata: { providerReference, eventName, nextStatus } } });
-  }); } catch (e: any) { if (e?.code === "P2002") return res.status(200).json({ success: true, duplicate: true }); throw e; }
+
+  try {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.transactionEvent.create({
+        data: {
+          transactionId: transaction.id,
+          actorUserId: transaction.senderId,
+          eventType: eventName,
+          eventKey,
+          fromStatus: transaction.status,
+          toStatus: nextStatus,
+          provider: "PAYSTACK",
+          providerRef: providerReference,
+          payloadHash: crypto.createHash("sha256").update(req.rawBody).digest("hex"),
+          metadata: { reason: data.reason || null }
+        }
+      });
+
+      const latest = await tx.transaction.findUnique({ where: { id: transaction.id } });
+      if (!latest) return;
+
+      // SUCCESS can only follow PROCESSING. FAILED cannot overwrite SUCCESS.
+      // A genuine REVERSED event can follow PROCESSING or SUCCESS.
+      const allowedPreviousStatuses = nextStatus === "REVERSED"
+        ? ["PROCESSING", "SUCCESS"]
+        : ["PROCESSING"];
+
+      const changed = await tx.transaction.updateMany({
+        where: { id: latest.id, status: { in: allowedPreviousStatuses as any } },
+        data: {
+          status: nextStatus as any,
+          completedAt: new Date(),
+          failureReason: nextStatus === "SUCCESS"
+            ? null
+            : String(data.reason || `Paystack event: ${eventName}`)
+        }
+      });
+
+      // A stale or out-of-order event must not change the ledger or refund.
+      if (changed.count !== 1) return;
+
+      const linkedReceipts = await tx.receipt.findMany({
+        where: { transactionId: latest.id }
+      });
+      for (const receipt of linkedReceipts) {
+        await tx.receipt.update({
+          where: { id: receipt.id },
+          data: {
+            snapshot: {
+              ...(receipt.snapshot as any),
+              status: nextStatus,
+              completedAt: new Date().toISOString(),
+              providerReference
+            }
+          }
+        });
+      }
+
+      // Only the single successful status transition above can trigger this refund.
+      if ((nextStatus === "FAILED" || nextStatus === "REVERSED") && latest.senderId) {
+        await tx.wallet.update({
+          where: { userId: latest.senderId },
+          data: { balance: { increment: latest.amount } }
+        });
+        await tx.account.update({
+          where: { userId: latest.senderId },
+          data: { balanceKobo: { increment: amountToKobo(latest.amount) } }
+        });
+        await tx.transactionEntry.create({
+          data: {
+            transactionId: latest.id,
+            userId: latest.senderId,
+            type: "CREDIT",
+            amount: latest.amount
+          }
+        });
+      }
+
+      if (latest.senderId) {
+        await tx.notification.create({
+          data: {
+            userId: latest.senderId,
+            type: "TRANSFER_SENT",
+            title: `Bank transfer ${nextStatus.toLowerCase()}`,
+            message: `Bank transfer ${latest.reference}: ${nextStatus.toLowerCase()}.`
+          }
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          targetUserId: latest.senderId,
+          action: "PAYSTACK_WEBHOOK_RECONCILED",
+          entityType: "Transaction",
+          entityId: latest.id,
+          metadata: { providerReference, eventName, nextStatus }
+        }
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (e: any) {
+    if (e?.code === "P2002") return res.status(200).json({ success: true, duplicate: true });
+    throw e;
+  }
+
   return res.status(200).json({ success: true });
 }));
 
