@@ -347,6 +347,294 @@ app.get("/api/me", requireAuth, asyncRoute(async (req: any, res: any) => {
   });
 }));
 
+
+// ==========================================
+
+app.get("/api/gifts/weekly/eligibility", requireAuth, async (req:any, res:any) => {
+  try {
+    const userId = req.userId || req.user?.id || req.auth?.userId;
+    const accountNumber = String(req.query.accountNumber || "").trim();
+    if (!userId) return res.status(401).json({success:false,message:"Authentication required."});
+    if (!/^\d{10}$/.test(accountNumber))
+      return res.status(400).json({success:false,message:"Enter your 10-digit Veyra account number."});
+
+    const owner = await prisma.user.findUnique({
+      where:{id:userId},select:{id:true,accountNumber:true,status:true,firstName:true,lastName:true,username:true}
+    });
+    if (!owner || owner.status !== "ACTIVE" || owner.accountNumber !== accountNumber)
+      return res.status(403).json({success:false,message:"Enter the account number belonging to your signed-in account."});
+
+    const rows = await prisma.user.findMany({
+      where:{status:"ACTIVE"},
+      select:{id:true,account:{select:{id:true}},wallet:{select:{id:true}}},
+      orderBy:{id:"asc"}
+    });
+    const eligible = rows.filter(u => Boolean(u.account) && Boolean(u.wallet));
+    const count = eligible.length;
+    if (!count) return res.status(400).json({success:false,message:"No eligible Veyra accounts are available this week."});
+    const index = eligible.findIndex(u => u.id === userId);
+    if (index < 0) return res.status(403).json({success:false,message:"This account is not eligible for the weekly Gift."});
+
+    const pool = 10000000000000n;
+    const base = pool / BigInt(count);
+    const remainder = pool % BigInt(count);
+    const amount = (Number(base + (BigInt(index) < remainder ? 1n : 0n))/100).toFixed(2);
+    const wat = new Date(Date.now()+3600000);
+    const monday = new Date(wat);
+    monday.setUTCDate(wat.getUTCDate()-((wat.getUTCDay()+6)%7));
+    monday.setUTCHours(0,0,0,0);
+    const week = monday.toISOString().slice(0,10);
+    const existing = await prisma.transaction.findUnique({
+      where:{reference:`WEEKLY-GIFT-${userId}-${week}`}
+    });
+    return res.json({success:true,eligible:true,alreadyClaimed:Boolean(existing),
+      accountNumber,
+      accountName: [owner.firstName, owner.lastName].filter(Boolean).join(" ").trim() || owner.username || "Veyra Account Holder",
+      eligibleCount:count,amount,currency:"NGN",week});
+  } catch(e) {
+    console.error("Weekly Gift eligibility error:",e);
+    return res.status(500).json({success:false,message:"Unable to check Gift eligibility."});
+  }
+});
+
+// WEEKLY VEYRA GIFT
+// ==========================================
+app.post("/api/gifts/weekly/claim", requireAuth, async (req, res) => {
+  try {
+    const userId =
+      (req as any).userId ||
+      (req as any).user?.id ||
+      (req as any).auth?.userId;
+
+    if (!userId) {
+      return res.status(401).json({ success:false, message:"Authentication required." });
+    }
+
+    const body = req.body || {};
+    const accountNumber = String(body.accountNumber || "").trim();
+    const pin = String(body.pin || "");
+    if (!/^\d{10}$/.test(accountNumber))
+      return res.status(400).json({success:false,message:"Enter your 10-digit Veyra account number."});
+    if (!/^\d{4}$/.test(pin))
+      return res.status(400).json({success:false,message:"Enter your 4-digit transaction PIN."});
+
+    const owner = await prisma.user.findUnique({
+      where:{id:userId}, select:{id:true,accountNumber:true,status:true}
+    });
+    if (!owner || owner.status !== "ACTIVE" || owner.accountNumber !== accountNumber)
+      return res.status(403).json({success:false,message:"Account number does not match your signed-in account."});
+
+    try {
+      await verifyTransactionPin(userId, pin);
+    } catch (e:any) {
+      const code = e?.message || "INVALID_PIN";
+      return res.status(code === "PIN_LOCKED" ? 423 : code === "USER_NOT_FOUND" ? 404 : 401)
+        .json({success:false,code,message:friendlyPinError(code)});
+    }
+
+    // One shared weekly pool: ₦100 billion, divided among eligible accounts.
+    const poolKobo = 10000000000000n;
+    const eligibleRows = await prisma.user.findMany({
+      where: { status: "ACTIVE" },
+      select: {
+        id: true,
+        account: { select: { id: true } },
+        wallet: { select: { id: true } }
+      },
+      orderBy: { id: "asc" }
+    });
+    const eligibleUsers = eligibleRows.filter(
+      (u) => Boolean(u.account) && Boolean(u.wallet)
+    );
+    const eligibleCount = eligibleUsers.length;
+    if (!eligibleCount) {
+      return res.status(400).json({
+        success: false,
+        message: "No eligible Veyra accounts are available this week."
+      });
+    }
+
+    const eligibleIndex = eligibleUsers.findIndex((u) => u.id === userId);
+    if (eligibleIndex < 0) {
+      return res.status(403).json({
+        success: false,
+        message: "This account is not eligible for the weekly Gift."
+      });
+    }
+
+    const baseShareKobo = poolKobo / BigInt(eligibleCount);
+    const remainderKobo = poolKobo % BigInt(eligibleCount);
+    const giftKobo =
+      baseShareKobo + (BigInt(eligibleIndex) < remainderKobo ? 1n : 0n);
+    const giftNaira = (Number(giftKobo) / 100).toFixed(2);
+
+    const now = new Date();
+    const wat = new Date(now.getTime() + 60 * 60 * 1000);
+    const day = wat.getUTCDay();
+    const monday = new Date(wat);
+    monday.setUTCDate(wat.getUTCDate() - ((day + 6) % 7));
+    monday.setUTCHours(0,0,0,0);
+
+    const weekKey = monday.toISOString().slice(0,10);
+    const reference = `WEEKLY-GIFT-${userId}-${weekKey}`;
+    const completedAt = new Date();
+
+    const existing = await prisma.transaction.findUnique({
+      where: { reference }
+    });
+
+    if (existing) {
+      return res.json({
+        success:true,
+        alreadyClaimed:true,
+        message:"Your weekly gift has already been claimed.",
+        transaction:existing
+      });
+    }
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const account = await tx.account.findUnique({ where: { userId } });
+        const wallet = await tx.wallet.findUnique({ where: { userId } });
+
+        if (!account) throw new Error("ACCOUNT_NOT_FOUND");
+        if (!wallet) throw new Error("WALLET_NOT_FOUND");
+
+        const already = await tx.transaction.findUnique({
+          where: { reference }
+        });
+
+        if (already) return { alreadyClaimed:true, transaction:already };
+
+        await tx.account.update({
+          where: { userId },
+          data: { balanceKobo: account.balanceKobo + giftKobo }
+        });
+
+        await tx.wallet.update({
+          where: { userId },
+          data: { balance: { increment: giftNaira } }
+        });
+
+        const transaction = await tx.transaction.create({
+          data: {
+            reference,
+            senderId:null,
+            receiverId:userId,
+            type:"INTERNAL_TRANSFER",
+            status:"SUCCESS",
+            amount:giftNaira,
+            fee:"0",
+            vat:"0",
+            total:giftNaira,
+            narration:"Weekly Veyra Gift",
+            metadata:{
+              giftType:"WEEKLY_GIFT",
+              giftWeek:weekKey,
+              amountNaira:giftNaira,
+              source:"VEYRA_WEEKLY_GIFT"
+            },
+            createdAt:completedAt,
+            completedAt
+          }
+        });
+
+        await tx.transactionEntry.create({
+          data:{
+            transactionId:transaction.id,
+            userId,
+            type:"CREDIT",
+            amount:giftNaira
+          }
+        });
+
+        await tx.transactionEvent.create({
+          data:{
+            transactionId:transaction.id,
+            status:"SUCCESS",
+            message:"Weekly Veyra gift claimed",
+            eventType:"GIFT_CLAIMED",
+            eventKey:`${transaction.id}:GIFT_CLAIMED`,
+            toStatus:"SUCCESS",
+            provider:"VEYRA",
+            createdAt:completedAt
+          }
+        });
+
+        await tx.receipt.create({
+          data:{
+            userId,
+            transactionId:transaction.id,
+            reference,
+            kind:"GIFT",
+            snapshot:{
+              type:"WEEKLY_GIFT",
+              title:"Weekly Veyra Gift",
+              amount:giftNaira,
+              currency:"NGN",
+              week:weekKey,
+              status:"SUCCESS"
+            }
+          }
+        });
+
+        await tx.notification.create({
+          data:{
+            userId,
+            channel:"IN_APP",
+            type:"SYSTEM",
+            title:"Weekly Gift Received 🎁",
+            body:`Your weekly Veyra Gift of ₦${Number(giftNaira).toLocaleString("en-NG",{minimumFractionDigits:2,maximumFractionDigits:2})} has been credited to your account.`,
+            message:`Your weekly Veyra Gift of ₦${Number(giftNaira).toLocaleString("en-NG",{minimumFractionDigits:2,maximumFractionDigits:2})} has been credited to your account.`,
+            status:"QUEUED",
+            read:false
+          }
+        });
+
+        return { alreadyClaimed:false, transaction };
+      });
+
+      return res.json({
+        success:true,
+        alreadyClaimed:result.alreadyClaimed,
+        amount:giftNaira,
+        currency:"NGN",
+        message:result.alreadyClaimed
+          ? "Your weekly gift has already been claimed."
+          : `Weekly gift of ₦${Number(giftNaira).toLocaleString("en-NG",{minimumFractionDigits:2,maximumFractionDigits:2})} credited successfully.`,
+        transaction:result.transaction
+      });
+    } catch (err:any) {
+      if (err?.code === "P2002") {
+        const winner = await prisma.transaction.findUnique({
+          where: { reference }
+        });
+
+        if (winner) {
+          return res.json({
+            success:true,
+            alreadyClaimed:true,
+            message:"Your weekly gift has already been claimed.",
+            transaction:winner
+          });
+        }
+      }
+
+      if (err?.message === "ACCOUNT_NOT_FOUND")
+        return res.status(404).json({success:false,message:"Veyra account not found."});
+
+      if (err?.message === "WALLET_NOT_FOUND")
+        return res.status(404).json({success:false,message:"Veyra wallet not found."});
+
+      console.error("Weekly gift claim error:",err);
+      return res.status(500).json({success:false,message:"Unable to claim weekly gift."});
+    }
+  } catch (err) {
+    console.error("Weekly gift endpoint error:",err);
+    return res.status(500).json({success:false,message:"Unable to process weekly gift."});
+  }
+});
+
 app.get("/api/users/lookup", requireAuth, asyncRoute(async (req: any, res: any) => {
   const q = String(req.query.q || "").trim();
   if (q.length < 3) return res.status(400).json({ success: false, message: "Search is too short." });
