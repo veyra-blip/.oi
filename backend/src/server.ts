@@ -1600,12 +1600,45 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.idempotencyKey.findUnique({ where:{ userId_key:{ userId:req.userId, key:idem } }, include:{transaction:true} });
       if (existing) { if (existing.requestHash !== requestHash) throw new Error("IDEMPOTENCY_CONFLICT"); return { transaction:existing.transaction, created:false }; }
-      const sender = await tx.user.findUnique({ where:{ id:req.userId }, include:{wallet:true} });
-      if (!sender?.wallet || sender.wallet.status !== "ACTIVE") throw new Error("WALLET_NOT_ACTIVE");
-      const debit = await tx.wallet.updateMany({ where:{ userId:req.userId, status:"ACTIVE", balance:{gte:amount} }, data:{balance:{decrement:amount}} });
+      const sender = await tx.user.findUnique({
+        where: { id: req.userId },
+        include: { wallet: true, account: true }
+      });
+      if (!sender?.wallet || !sender.account ||
+          sender.wallet.status !== "ACTIVE" || sender.account.status !== "ACTIVE") {
+        throw new Error("WALLET_NOT_ACTIVE");
+      }
+
+      // Account balance is authoritative; synchronize the legacy wallet mirror.
+      const amountKobo = amountToKobo(amount);
+      const authoritativeWalletBalance = new Prisma.Decimal(
+        sender.account.balanceKobo.toString()
+      ).div(100);
+
+      await tx.wallet.update({
+        where: { userId: req.userId },
+        data: { balance: authoritativeWalletBalance }
+      });
+
+      const accountDebit = await tx.account.updateMany({
+        where: {
+          userId: req.userId,
+          status: "ACTIVE",
+          balanceKobo: { gte: amountKobo }
+        },
+        data: { balanceKobo: { decrement: amountKobo } }
+      });
+      if (accountDebit.count !== 1) throw new Error("INSUFFICIENT_BALANCE");
+
+      const debit = await tx.wallet.updateMany({
+        where: {
+          userId: req.userId,
+          status: "ACTIVE",
+          balance: { gte: amount }
+        },
+        data: { balance: { decrement: amount } }
+      });
       if (debit.count !== 1) throw new Error("INSUFFICIENT_BALANCE");
-      const accountDebit = await tx.account.updateMany({ where:{userId:req.userId,status:"ACTIVE",balanceKobo:{gte:amountToKobo(amount)}}, data:{balanceKobo:{decrement:amountToKobo(amount)}} });
-      if (accountDebit.count !== 1) throw new Error("ACCOUNT_BALANCE_MISMATCH");
       const providerMode = body.countryCode === "NG" && body.currency === "NGN" ? (String(process.env.BANK_TRANSFER_MODE || "SIMULATED").toUpperCase()) : "EXTERNAL_PROVIDER";
       let mirrorBankAccount: any = null;
       if (providerMode !== "LIVE" && body.countryCode === "NG" && body.currency === "NGN") {
@@ -1640,6 +1673,19 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
       const after = await tx.wallet.findUnique({where:{userId:req.userId},select:{balance:true}});
       return {transaction:created, created:true, balanceAfter:after?.balance?.toString() || "0", bankCreditRecorded:Boolean(mirrorBankAccount)};
     }, {isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+
+    // An idempotent retry must never submit a second external payout.
+    if (!result.created) {
+      const existingStatus = String(result.transaction.status);
+      return res.status(existingStatus === "PROCESSING" ? 202 : 200).json({
+        success: existingStatus === "SUCCESS" || existingStatus === "PROCESSING",
+        status: existingStatus,
+        transactionId: result.transaction.id,
+        reference: result.transaction.reference,
+        message: "Existing transaction returned; no new payout was submitted."
+      });
+    }
+
     if (String(process.env.BANK_TRANSFER_MODE || "SIMULATED").toUpperCase() === "LIVE" && body.countryCode === "NG" && body.currency === "NGN") {
       try {
         const recipient = await paystackRequest("/transferrecipient", { method: "POST", body: JSON.stringify({ type: "nuban", name: verifiedName, account_number: body.accountNumber, bank_code: body.bankCode, currency: "NGN" }) });

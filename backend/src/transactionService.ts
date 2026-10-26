@@ -42,16 +42,24 @@ export async function internalTransfer(
       throw new Error("WALLET_NOT_ACTIVE");
     }
 
-    // Account.balanceKobo is authoritative. Wallet is retained as a legacy
-    // mirror while older service endpoints are being migrated. Stop safely
-    // rather than moving money if the two representations have drifted.
+    // Account.balanceKobo is authoritative. Reconcile legacy wallet mirrors
+    // inside this database transaction before applying the transfer.
     const amountKobo = BigInt(amount.mul(100).toFixed(0));
-    const senderWalletKobo = BigInt(sender.wallet.balance.mul(100).toFixed(0));
-    const receiverWalletKobo = BigInt(receiver.wallet.balance.mul(100).toFixed(0));
-    if (senderWalletKobo !== sender.account.balanceKobo ||
-        receiverWalletKobo !== receiver.account.balanceKobo) {
-      throw new Error("ACCOUNT_BALANCE_MISMATCH");
-    }
+    const senderWalletBalance = new Prisma.Decimal(
+      sender.account.balanceKobo.toString()
+    ).div(100);
+    const receiverWalletBalance = new Prisma.Decimal(
+      receiver.account.balanceKobo.toString()
+    ).div(100);
+
+    await tx.wallet.update({
+      where: { userId: senderId },
+      data: { balance: senderWalletBalance }
+    });
+    await tx.wallet.update({
+      where: { userId: recipientId },
+      data: { balance: receiverWalletBalance }
+    });
 
     const accountDebit = await tx.account.updateMany({
       where: { userId: senderId, status: "ACTIVE", balanceKobo: { gte: amountKobo } },
