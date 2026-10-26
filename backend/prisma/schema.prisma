@@ -424,7 +424,7 @@ model WebAuthnChallenge {
 model TransactionEvent {
   id            String      @id @default(cuid())
   transactionId String
-  status        String
+  status        TransactionStatus
   message       String?
   actorUserId   String?
   eventType     String
