@@ -1615,7 +1615,7 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
       }
       const created = await tx.transaction.create({ data:{ reference:reference("BANK"), senderId:req.userId, type:"BANK_TRANSFER", status:providerMode === "LIVE" ? "PROCESSING" : "SUCCESS", amount, fee:0, vat:0, total:amount, narration:body.narration, recipientName:verifiedName, recipientAccount:body.accountNumber, recipientBank:resolvedBankName, completedAt:providerMode === "LIVE" ? null : new Date(), metadata:{countryCode:body.countryCode,currency:body.currency,bankCode:body.bankCode||null,providerMode,bankCreditRecorded:Boolean(mirrorBankAccount),simulated:providerMode !== "LIVE"} } });
       await tx.transactionEntry.create({ data:{transactionId:created.id,userId:req.userId,type:"DEBIT",amount} });
-      await tx.transactionEvent.create({ data:{transactionId:created.id,actorUserId:req.userId,eventType:"BANK_TRANSFER_SUBMITTED",fromStatus:"CREATED",toStatus:created.status,provider:providerMode === "LIVE" ? "PAYSTACK" : "SIMULATED",eventKey:`bank:${created.reference}:created`,metadata:{simulated:providerMode !== "LIVE"}} });
+      await tx.transactionEvent.create({ data:{transactionId:created.id,status:created.status,message:"Bank transfer submitted",actorUserId:req.userId,eventType:"BANK_TRANSFER_SUBMITTED",fromStatus:"CREATED",toStatus:created.status,provider:providerMode === "LIVE" ? "PAYSTACK" : "SIMULATED",eventKey:`bank:${created.reference}:created`,metadata:{simulated:providerMode !== "LIVE"}} });
       await tx.receipt.create({
   data: {
     userId: req.userId,
@@ -1653,7 +1653,7 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
           await tx.transaction.update({ where: { id: result.transaction.id }, data: { status: "FAILED", completedAt: new Date(), failureReason: "Paystack transfer submission failed" } });
           const receipts = await tx.receipt.findMany({ where: { transactionId: result.transaction.id } });
           for (const receipt of receipts) await tx.receipt.update({ where: { id: receipt.id }, data: { snapshot: { ...(receipt.snapshot as any), status: "FAILED", completedAt: new Date().toISOString(), simulated: false } } });
-          await tx.transactionEvent.create({ data: { transactionId: result.transaction.id, actorUserId: req.userId, eventType: "PAYSTACK_SUBMISSION_FAILED", fromStatus: "PROCESSING", toStatus: "FAILED", provider: "PAYSTACK", eventKey: `bank:${result.transaction.reference}:submission-failed` } });
+          await tx.transactionEvent.create({ data: { transactionId: result.transaction.id, status: "FAILED", message: "Paystack transfer submission failed; ledger debit reversed", actorUserId: req.userId, eventType: "PAYSTACK_SUBMISSION_FAILED", fromStatus: "PROCESSING", toStatus: "FAILED", provider: "PAYSTACK", eventKey: `bank:${result.transaction.reference}:submission-failed` } });
           await tx.transactionEntry.create({ data: { transactionId: result.transaction.id, userId: req.userId, type: "CREDIT", amount } });
         });
         return res.status(502).json({ success:false, status:"FAILED", transactionId:result.transaction.id, reference:result.transaction.reference, code:"PAYSTACK_TRANSFER_FAILED", message:"Paystack could not accept the transfer. The Veyra ledger debit was reversed." });
@@ -1709,6 +1709,8 @@ app.post("/api/webhooks/paystack", asyncRoute(async (req: any, res: any) => {
       await tx.transactionEvent.create({
         data: {
           transactionId: transaction.id,
+          status: nextStatus,
+          message: `Paystack webhook: ${eventName}`,
           actorUserId: transaction.senderId,
           eventType: eventName,
           eventKey,
