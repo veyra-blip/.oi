@@ -574,6 +574,14 @@ app.post("/api/gifts/weekly/claim", requireAuth, async (req, res) => {
               currency:"NGN",
               week:weekKey,
               status:"SUCCESS"
+            },
+            dataJson:{
+              type:"WEEKLY_GIFT",
+              title:"Weekly Veyra Gift",
+              amount:giftNaira,
+              currency:"NGN",
+              week:weekKey,
+              status:"SUCCESS"
             }
           }
         });
@@ -1944,6 +1952,17 @@ app.post("/api/providers/bank-transfer", requireAuth, moneyLimiter, asyncRoute(a
     reference: `${created.reference}-R`,
     kind: "BANK_TRANSFER",
     snapshot: {
+      kind: "BANK_TRANSFER",
+      reference: created.reference,
+      status: created.status,
+      amount: amount.toFixed(2),
+      currency: "NGN",
+      recipientName: verifiedName,
+      recipientAccount: body.accountNumber,
+      recipientBank: resolvedBankName,
+      simulated: providerMode !== "LIVE"
+    },
+    dataJson: {
       kind: "BANK_TRANSFER",
       reference: created.reference,
       status: created.status,
