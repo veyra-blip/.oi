@@ -682,6 +682,7 @@ app.get("/api/transfers/internal/recipient-history", requireAuth, asyncRoute(asy
 }));
 
 app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async (req: any, res: any) => {
+  console.info("[INTERNAL_TRANSFER] request_received");
   const body = z.object({
     recipientId: z.string(),
     amount: z.coerce.number().positive().max(50000000),
@@ -690,6 +691,7 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
     authorizationId: z.string().optional(),
     senderId: z.string().trim().max(30).optional()
   }).parse(req.body);
+  console.info("[INTERNAL_TRANSFER] request_validated");
 
   if (Boolean(body.pin) === Boolean(body.authorizationId)) {
     return res.status(400).json({ success:false, code:"ONE_AUTH_METHOD_REQUIRED", message:"Choose either your transaction PIN or fingerprint authorization." });
@@ -716,10 +718,14 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
     }
   }
 
+  console.info("[INTERNAL_TRANSFER] authorization_passed");
+  console.info("[INTERNAL_TRANSFER] daily_limit_check_started");
   const limitCheck = await checkDailyTransferLimit(req.userId, body.amount);
+  console.info("[INTERNAL_TRANSFER] daily_limit_check_completed", { allowed: limitCheck.ok });
   if (!limitCheck.ok) return res.status(403).json({ success: false, code: "DAILY_LIMIT_EXCEEDED", message: `This transfer exceeds your ${limitCheck.level} daily limit of ₦${limitCheck.limit.toLocaleString()}.` });
 
   try {
+    console.info("[INTERNAL_TRANSFER] database_transfer_started");
     const result = await internalTransfer(
       req.userId,
       body.recipientId,
@@ -728,8 +734,10 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
       idempotencyKey(req),
       body.senderId
     );
+    console.info("[INTERNAL_TRANSFER] database_transfer_completed");
     res.json({ success: true, transaction: result.transaction });
   } catch (e: any) {
+    console.error("[INTERNAL_TRANSFER] database_transfer_failed", { code: e?.code || e?.message || "UNKNOWN_ERROR" });
     const code = e.message || "TRANSFER_FAILED";
     const status = code === "INSUFFICIENT_BALANCE" ? 400 : code === "IDEMPOTENCY_KEY_REQUIRED" || code === "INVALID_AMOUNT" ? 400 : code === "IDEMPOTENCY_CONFLICT" ? 409 : 409;
     res.status(status).json({ success: false, code, message: friendlyError(code) });
