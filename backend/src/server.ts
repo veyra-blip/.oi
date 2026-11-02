@@ -737,7 +737,11 @@ app.post("/api/transfers/internal", requireAuth, moneyLimiter, asyncRoute(async 
     console.info("[INTERNAL_TRANSFER] database_transfer_completed");
     res.json({ success: true, transaction: result.transaction });
   } catch (e: any) {
-    console.error("[INTERNAL_TRANSFER] database_transfer_failed", { code: e?.code || e?.message || "UNKNOWN_ERROR" });
+    console.error("[INTERNAL_TRANSFER] database_transfer_failed", {
+      code: e?.code || e?.message || "UNKNOWN_ERROR",
+      target: e?.meta?.target || null,
+      modelName: e?.meta?.modelName || null
+    });
     const code = e.message || "TRANSFER_FAILED";
     const status = code === "INSUFFICIENT_BALANCE" ? 400 : code === "IDEMPOTENCY_KEY_REQUIRED" || code === "INVALID_AMOUNT" ? 400 : code === "IDEMPOTENCY_CONFLICT" ? 409 : 409;
     res.status(status).json({ success: false, code, message: friendlyError(code) });
